@@ -16,9 +16,6 @@ class Clinica(models.Model):
     nombre      = models.CharField(max_length=150)
     email_admin = models.EmailField(unique=True)
     creado_en   = models.DateTimeField(auto_now_add=True)
-    # activo: campo legacy, no se usa en ningún filtro activo.
-    # Para desactivar una clínica, eliminar sus PerfilUsuario o desactivar sus usuarios.
-    activo      = models.BooleanField(default=True)
 
     class Meta:
         ordering = ["nombre"]
@@ -369,7 +366,7 @@ class CodigoVerificacion(models.Model):
     - Se genera uno nuevo por cada solicitud (invalida los anteriores).
     - Expira a los 15 minutos.
     - Se marca como usado al validarse correctamente.
-    - Tras 3 intentos fallidos el código queda bloqueado.
+    - Tras OTP_MAX_INTENTOS intentos fallidos el código queda bloqueado.
     """
 
     email = models.EmailField(db_index=True)
@@ -378,8 +375,6 @@ class CodigoVerificacion(models.Model):
     expira_en = models.DateTimeField()
     usado = models.BooleanField(default=False)
     intentos_fallidos = models.PositiveSmallIntegerField(default=0)
-
-    MAX_INTENTOS = 3
 
     class Meta:
         ordering = ["-creado_en"]
@@ -396,7 +391,9 @@ class CodigoVerificacion(models.Model):
         Nota: el estado `usado` se controla externamente filtrando `usado=False`
         en la query, por lo que no es necesario verificarlo aquí.
         """
+        from django.conf import settings as _settings
+        max_intentos = getattr(_settings, "OTP_MAX_INTENTOS", 3)
         return (
-            self.intentos_fallidos < self.MAX_INTENTOS
+            self.intentos_fallidos < max_intentos
             and timezone.now() <= self.expira_en
         )

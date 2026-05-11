@@ -60,6 +60,10 @@ REGISTRO_SECRET_KEY = os.getenv("REGISTRO_SECRET_KEY", "")
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 EMAIL_FROM = os.getenv("EMAIL_FROM", "noreply@veterinariascarlet.cl")
 
+# ── OTP ────────────────────────────────────────────────────────────────────────
+# Número máximo de intentos fallidos antes de bloquear un código OTP.
+OTP_MAX_INTENTOS = int(os.getenv("OTP_MAX_INTENTOS", "3"))
+
 # Render y otros proxies envían este header para indicar HTTPS
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 

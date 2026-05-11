@@ -67,6 +67,10 @@ class EmailYaRegistradoError(ValueError):
     """El email ya está asociado a una cuenta existente."""
 
 
+class EmailFormatoInvalidoError(ValueError):
+    """El email no tiene un formato válido."""
+
+
 class PasswordDemasiadoCortaError(ValueError):
     """La contraseña no cumple el mínimo de longitud."""
 
@@ -116,10 +120,15 @@ def solicitar_codigo_verificacion(email: str) -> None:
     La respuesta es siempre genérica para no revelar si el email existe.
 
     Raises:
-        CamposObligatoriosError: Si el email está vacío.
+        CamposObligatoriosError: Si el email está vacío o tiene formato inválido.
     """
     if not email:
         raise CamposObligatoriosError("El correo electrónico es obligatorio.")
+
+    try:
+        validate_email(email)
+    except DjangoValidationError:
+        raise EmailFormatoInvalidoError("El correo electrónico no tiene un formato válido.")
 
     # Si el email ya tiene cuenta, no enviamos código pero respondemos igual
     # para no revelar qué emails están registrados (evita enumeración).
@@ -214,7 +223,8 @@ def validar_codigo_verificacion(email: str, codigo: str) -> None:
             raise CodigoInvalidoError("El código es incorrecto o ha expirado.")
 
         # Verificar si ya está bloqueado por intentos
-        if registro.intentos_fallidos >= CodigoVerificacion.MAX_INTENTOS:
+        max_intentos = django_settings.OTP_MAX_INTENTOS
+        if registro.intentos_fallidos >= max_intentos:
             raise CodigoBloqueadoError(
                 "El código ha sido bloqueado por demasiados intentos. "
                 "Solicita un nuevo código."
@@ -231,7 +241,7 @@ def validar_codigo_verificacion(email: str, codigo: str) -> None:
             CodigoVerificacion.objects.filter(pk=registro.pk).update(
                 intentos_fallidos=F("intentos_fallidos") + 1
             )
-            restantes = CodigoVerificacion.MAX_INTENTOS - nuevos_intentos
+            restantes = max_intentos - nuevos_intentos
             if restantes <= 0:
                 raise CodigoBloqueadoError(
                     "El código ha sido bloqueado por demasiados intentos. "
@@ -282,7 +292,7 @@ def registrar_clinica(data: RegistroClinicaInput) -> RegistroClinicaResult:
     try:
         validate_email(data.email)
     except DjangoValidationError:
-        raise CamposObligatoriosError("El correo electrónico no tiene un formato válido.")
+        raise EmailFormatoInvalidoError("El correo electrónico no tiene un formato válido.")
 
     if _email_en_uso(data.email):
         raise EmailYaRegistradoError("Este correo ya está en uso")
@@ -510,6 +520,10 @@ def editar_veterinario(user_id: int, data: EditarVeterinarioInput, clinica: "Cli
         raise NoSePuedeEliminarAdminError("No se puede editar un usuario administrador.")
 
     if data.email and data.email != user.email:
+        try:
+            validate_email(data.email)
+        except DjangoValidationError:
+            raise EmailFormatoInvalidoError("El correo electrónico no tiene un formato válido.")
         if _email_en_uso(data.email, exclude_pk=user_id):
             raise EmailYaRegistradoError("Este correo ya está en uso.")
 

@@ -62,6 +62,7 @@ from .services import (
     CodigoInvalidoError,
     CrearVeterinarioInput,
     EditarVeterinarioInput,
+    EmailFormatoInvalidoError,
     EmailYaRegistradoError,
     NoSePuedeEliminarAdminError,
     PasswordDemasiadoCortaError,
@@ -654,6 +655,8 @@ def registro_clinica_view(request):
         result = registrar_clinica(data)
     except CamposObligatoriosError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    except EmailFormatoInvalidoError as exc:
+        return Response({"email": [str(exc)]}, status=status.HTTP_400_BAD_REQUEST)
     except EmailYaRegistradoError as exc:
         return Response({"email": [str(exc)]}, status=status.HTTP_400_BAD_REQUEST)
     except PasswordDemasiadoCortaError as exc:
@@ -833,6 +836,8 @@ def veterinario_detail_view(request, pk: int):
             return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
         except NoSePuedeEliminarAdminError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except EmailFormatoInvalidoError as exc:
+            return Response({"email": [str(exc)]}, status=status.HTTP_400_BAD_REQUEST)
         except EmailYaRegistradoError as exc:
             return Response({"email": [str(exc)]}, status=status.HTTP_400_BAD_REQUEST)
         except PasswordDemasiadoCortaError as exc:
