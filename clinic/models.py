@@ -379,6 +379,7 @@ class CodigoVerificacion(models.Model):
         ordering = ["-creado_en"]
         indexes = [
             models.Index(fields=["email", "usado"], name="idx_codigo_email_usado"),
+            models.Index(fields=["email", "creado_en"], name="idx_codigo_email_creado"),
         ]
 
     def __str__(self) -> str:

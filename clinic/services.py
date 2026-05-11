@@ -19,7 +19,6 @@ from datetime import date, timedelta
 from django.conf import settings as django_settings
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.core.mail import send_mail
 from django.core.validators import validate_email
 from django.db import transaction
 from django.db.models import F, Q, QuerySet
@@ -270,6 +269,8 @@ def email_esta_verificado(email: str) -> bool:
     (default: 30 min). Usado por el endpoint de registro para confirmar
     que el email fue verificado antes de crear la cuenta.
     """
+    # Normalizar para que coincida con el email guardado al solicitar el código
+    email = email.strip().lower()
     ventana = timedelta(minutes=django_settings.OTP_VERIFICACION_VENTANA_MINUTOS)
     desde = timezone.now() - ventana
     return CodigoVerificacion.objects.filter(
@@ -356,20 +357,40 @@ def registrar_clinica(data: RegistroClinicaInput) -> RegistroClinicaResult:
 
 
 def _enviar_correo_bienvenida(email: str, nombre_admin: str, nombre_clinica: str) -> None:
-    """Envía el correo de bienvenida. Los errores se loguean pero no propagan."""
+    """Envía el correo de bienvenida usando Resend. Los errores se loguean pero no propagan."""
+    api_key = django_settings.RESEND_API_KEY
+    from_email = django_settings.EMAIL_FROM
+
+    if not api_key:
+        logger.warning("RESEND_API_KEY no configurada — correo de bienvenida no enviado a %s", email)
+        return
+
+    resend.api_key = api_key
+
     try:
-        send_mail(
-            subject="Bienvenido a Veterinaria Scarlet",
-            message=(
-                f"Hola {nombre_admin},\n\n"
-                f"Tu clínica '{nombre_clinica}' ha sido registrada exitosamente.\n"
-                f"Ya puedes iniciar sesión con tu correo: {email}\n\n"
-                "Equipo Veterinaria Scarlet"
-            ),
-            from_email=django_settings.EMAIL_FROM,
-            recipient_list=[email],
-            fail_silently=False,
-        )
+        resend.Emails.send({
+            "from": from_email,
+            "to": [email],
+            "subject": "Bienvenido a Veterinaria Scarlet",
+            "html": f"""
+                <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px">
+                  <h2 style="color:#16a34a;margin-bottom:8px">Veterinaria Scarlet</h2>
+                  <p style="color:#475569;margin-bottom:16px">
+                    Hola <strong>{nombre_admin}</strong>,
+                  </p>
+                  <p style="color:#475569;margin-bottom:16px">
+                    Tu clínica <strong>{nombre_clinica}</strong> ha sido registrada exitosamente.
+                  </p>
+                  <p style="color:#475569;margin-bottom:24px">
+                    Ya puedes iniciar sesión con tu correo: <strong>{email}</strong>
+                  </p>
+                  <p style="color:#94a3b8;font-size:13px">
+                    Equipo Veterinaria Scarlet
+                  </p>
+                </div>
+            """,
+        })
+        logger.info("Correo de bienvenida enviado a %s", email)
     except Exception as exc:
         logger.warning("No se pudo enviar el correo de bienvenida a %s: %s", email, exc)
 
@@ -545,12 +566,8 @@ def editar_veterinario(user_id: int, data: EditarVeterinarioInput, clinica: "Cli
             raise EmailFormatoInvalidoError("El correo electrónico no tiene un formato válido.")
         if _email_en_uso(nuevo_email, exclude_pk=user_id):
             raise EmailYaRegistradoError("Este correo ya está en uso.")
-        # Reasignar normalizado para que se guarde en lowercase
-        data = EditarVeterinarioInput(
-            nombre=data.nombre,
-            email=nuevo_email,
-            password=data.password,
-        )
+    else:
+        nuevo_email = None
 
     if data.password is not None and len(data.password) < 8:
         raise PasswordDemasiadoCortaError("La contraseña debe tener al menos 8 caracteres.")
@@ -559,9 +576,9 @@ def editar_veterinario(user_id: int, data: EditarVeterinarioInput, clinica: "Cli
     if data.nombre is not None:
         user.first_name = data.nombre
         update_fields.append("first_name")
-    if data.email:
-        user.email = data.email
-        user.username = data.email
+    if nuevo_email:
+        user.email = nuevo_email
+        user.username = nuevo_email
         update_fields.extend(["email", "username"])
     if data.password:
         user.set_password(data.password)
