@@ -37,7 +37,7 @@ class SoftDeleteTest(TestCase):
         from clinic.models import Clinica
         clinica, _ = Clinica.objects.get_or_create(
             email_admin="softdelete@test.cl",
-            defaults={"nombre": "Clínica SoftDelete", "activo": True},
+            defaults={"nombre": "Clínica SoftDelete", },
         )
         self.especie = Especie.objects.create(nombre="Gato", clinica=clinica)
 
@@ -212,7 +212,7 @@ class CatalogoSinActivoTest(TestCase):
         from clinic.models import Clinica
         clinica, _ = Clinica.objects.get_or_create(
             email_admin="catalogo@test.cl",
-            defaults={"nombre": "Clínica Catálogo", "activo": True},
+            defaults={"nombre": "Clínica Catálogo", },
         )
         e = Especie.objects.create(nombre="Conejo", clinica=clinica)
         self.assertFalse(hasattr(e, "activo"))
@@ -221,7 +221,7 @@ class CatalogoSinActivoTest(TestCase):
         from clinic.models import Clinica
         clinica, _ = Clinica.objects.get_or_create(
             email_admin="catalogo@test.cl",
-            defaults={"nombre": "Clínica Catálogo", "activo": True},
+            defaults={"nombre": "Clínica Catálogo", },
         )
         s = SexoPaciente.objects.create(nombre="Hembra", clinica=clinica)
         self.assertFalse(hasattr(s, "activo"))
@@ -230,7 +230,7 @@ class CatalogoSinActivoTest(TestCase):
         from clinic.models import Clinica
         clinica, _ = Clinica.objects.get_or_create(
             email_admin="catalogo@test.cl",
-            defaults={"nombre": "Clínica Catálogo", "activo": True},
+            defaults={"nombre": "Clínica Catálogo", },
         )
         e = Especie.objects.create(nombre="Hamster", clinica=clinica)
         e.soft_delete()

@@ -62,6 +62,7 @@ from .services import (
     CodigoInvalidoError,
     CrearVeterinarioInput,
     EditarVeterinarioInput,
+    EmailFormatoInvalidoError,
     EmailYaRegistradoError,
     NoSePuedeEliminarAdminError,
     PasswordDemasiadoCortaError,
@@ -168,9 +169,9 @@ class FlexibleTokenSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         identifier = attrs.get("username", "").strip()
 
-        # Una sola query: busca por username exacto o por email
+        # Una sola query: busca por username o email (case-insensitive)
         user = User.objects.filter(
-            Q(username=identifier) | Q(email=identifier),
+            Q(username__iexact=identifier) | Q(email__iexact=identifier),
             is_active=True,
         ).first()
 
@@ -562,22 +563,18 @@ class ArchivoDocumentoViewSet(TenantQuerysetMixin, PacienteFilterMixin, SoftDele
 @permission_classes([AllowAny])
 @throttle_classes([RegistroRateThrottle])
 def solicitar_codigo_view(request):
-    """POST { email, registro_secret_key } → envía código OTP al correo."""
-    # Verificar la clave secreta de registro antes de enviar el OTP
-    secret_key = settings.REGISTRO_SECRET_KEY
-    if secret_key:
-        provided_key = request.data.get("registro_secret_key", "")
-        if not provided_key or not hmac.compare_digest(str(provided_key), str(secret_key)):
-            return Response(
-                {"detail": "Clave de registro incorrecta."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+    """POST { email } → envía código OTP al correo.
 
+    La clave de registro NO se verifica aquí — el OTP es un paso previo público.
+    La clave se verifica en /registro/ al completar el registro.
+    """
     email = request.data.get("email", "").strip()
     try:
         solicitar_codigo_verificacion(email)
     except CamposObligatoriosError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    except EmailFormatoInvalidoError as exc:
+        return Response({"email": [str(exc)]}, status=status.HTTP_400_BAD_REQUEST)
     except Exception as exc:
         logger.error("Error enviando código a %s: %s", email, exc, exc_info=True)
         return Response(
@@ -654,6 +651,8 @@ def registro_clinica_view(request):
         result = registrar_clinica(data)
     except CamposObligatoriosError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    except EmailFormatoInvalidoError as exc:
+        return Response({"email": [str(exc)]}, status=status.HTTP_400_BAD_REQUEST)
     except EmailYaRegistradoError as exc:
         return Response({"email": [str(exc)]}, status=status.HTTP_400_BAD_REQUEST)
     except PasswordDemasiadoCortaError as exc:
@@ -833,6 +832,8 @@ def veterinario_detail_view(request, pk: int):
             return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
         except NoSePuedeEliminarAdminError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except EmailFormatoInvalidoError as exc:
+            return Response({"email": [str(exc)]}, status=status.HTTP_400_BAD_REQUEST)
         except EmailYaRegistradoError as exc:
             return Response({"email": [str(exc)]}, status=status.HTTP_400_BAD_REQUEST)
         except PasswordDemasiadoCortaError as exc:

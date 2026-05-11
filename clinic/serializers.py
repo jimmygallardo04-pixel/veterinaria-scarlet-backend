@@ -12,6 +12,9 @@ Los campos de auditoría (eliminado_en) nunca se exponen al cliente.
 from datetime import date
 import re
 
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.validators import validate_email
+
 from rest_framework import serializers
 
 from .models import (
@@ -55,7 +58,6 @@ class ClinicaEditSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Clinica
-        # activo excluido: campo legacy sin uso activo en filtros
         fields = ("id", "nombre", "email_admin", "creado_en")
         read_only_fields = ("id", "creado_en")
 
@@ -71,8 +73,13 @@ class ClinicaEditSerializer(serializers.ModelSerializer):
         value = value.strip().lower()
         if not value:
             raise serializers.ValidationError("El email no puede estar vacío.")
+        # Validar formato antes de verificar unicidad
+        try:
+            validate_email(value)
+        except DjangoValidationError:
+            raise serializers.ValidationError("El correo electrónico no tiene un formato válido.")
         # Verificar unicidad excluyendo la instancia actual
-        qs = Clinica.objects.filter(email_admin=value)
+        qs = Clinica.objects.filter(email_admin__iexact=value)
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
         if qs.exists():
@@ -206,6 +213,9 @@ class FichaClinicaSerializer(serializers.ModelSerializer):
         read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY, "paciente_nombre")
 
     def validate_peso_kg(self, value):
+        # Los validators del modelo (MinValueValidator/MaxValueValidator) ya validan
+        # los rangos, pero DRF solo los llama en full_clean(). Estos métodos dan
+        # mensajes de error más descriptivos en la respuesta de la API.
         if value is not None and value <= 0:
             raise serializers.ValidationError("El peso debe ser mayor a 0.")
         return value

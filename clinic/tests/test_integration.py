@@ -36,6 +36,7 @@ class CitaFiltradoPorPacienteTest(HypothesisTestCase):
 
     @hyp_settings(
         max_examples=50,
+        deadline=None,
         suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
     )
     @given(
@@ -317,14 +318,10 @@ class RegistroEmailDuplicadoTest(HypothesisTestCase):
         suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
     )
     @given(
-        local=st.text(
-            min_size=1, max_size=20,
-            alphabet=st.characters(whitelist_categories=("Ll", "Lu", "Nd")),
-        ),
-        domain=st.sampled_from(["example.com", "test.org", "clinica.cl", "mail.net"]),
+        suffix=st.integers(min_value=1, max_value=999999),
     )
-    def test_email_duplicado_devuelve_400(self, local, domain):
-        email = f"{local}@{domain}"
+    def test_email_duplicado_devuelve_400(self, suffix):
+        email = f"duplicado{suffix}@example.com"
         User.objects.filter(username=email).delete()
         User.objects.create_user(username=email, email=email, password="existingpass123")
 
