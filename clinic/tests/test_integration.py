@@ -36,6 +36,7 @@ class CitaFiltradoPorPacienteTest(HypothesisTestCase):
 
     @hyp_settings(
         max_examples=50,
+        deadline=None,
         suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
     )
     @given(

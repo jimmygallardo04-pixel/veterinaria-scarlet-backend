@@ -43,7 +43,7 @@ def migrar_datos(apps, schema_editor):
     # 1. Crear (o recuperar) la clínica de migración
     clinica_migrada, _ = Clinica.objects.get_or_create(
         email_admin=EMAIL_CLINICA_MIGRADA,
-        defaults={"nombre": NOMBRE_CLINICA_MIGRADA, "activo": True},
+        defaults={"nombre": NOMBRE_CLINICA_MIGRADA},
     )
 
     # 2. Asignar la clínica a todos los registros de dominio sin clinica_id

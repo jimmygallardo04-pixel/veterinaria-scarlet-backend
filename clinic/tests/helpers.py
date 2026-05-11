@@ -25,7 +25,7 @@ def make_clinica(nombre: str = "Clínica Test") -> Clinica:
     """Crea o recupera una clínica de prueba."""
     clinica, _ = Clinica.objects.get_or_create(
         email_admin=f"test_{nombre.lower().replace(' ', '_')}@test.cl",
-        defaults={"nombre": nombre, "activo": True},
+        defaults={"nombre": nombre},
     )
     return clinica
 

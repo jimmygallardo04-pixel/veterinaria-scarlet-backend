@@ -9,7 +9,6 @@ from django.utils import timezone
 
 from .managers import ActiveManager, AllObjectsManager
 
-
 # ─── Multi-tenancy ────────────────────────────────────────────────────────────
 
 class Clinica(models.Model):
@@ -391,8 +390,7 @@ class CodigoVerificacion(models.Model):
         Nota: el estado `usado` se controla externamente filtrando `usado=False`
         en la query, por lo que no es necesario verificarlo aquí.
         """
-        from django.conf import settings as _settings
-        max_intentos = getattr(_settings, "OTP_MAX_INTENTOS", 3)
+        max_intentos = getattr(settings, "OTP_MAX_INTENTOS", 3)
         return (
             self.intentos_fallidos < max_intentos
             and timezone.now() <= self.expira_en

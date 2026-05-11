@@ -58,7 +58,6 @@ class ClinicaEditSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Clinica
-        # activo excluido: campo legacy sin uso activo en filtros
         fields = ("id", "nombre", "email_admin", "creado_en")
         read_only_fields = ("id", "creado_en")
 
@@ -80,7 +79,7 @@ class ClinicaEditSerializer(serializers.ModelSerializer):
         except DjangoValidationError:
             raise serializers.ValidationError("El correo electrónico no tiene un formato válido.")
         # Verificar unicidad excluyendo la instancia actual
-        qs = Clinica.objects.filter(email_admin=value)
+        qs = Clinica.objects.filter(email_admin__iexact=value)
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
         if qs.exists():

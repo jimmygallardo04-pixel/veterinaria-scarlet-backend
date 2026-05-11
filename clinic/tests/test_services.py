@@ -268,7 +268,7 @@ class BuscarPacientesTest(TestCase):
         from clinic.models import Clinica
         clinica, _ = Clinica.objects.get_or_create(
             email_admin="buscar@test.cl",
-            defaults={"nombre": "Clínica Búsqueda", "activo": True},
+            defaults={"nombre": "Clínica Búsqueda"},
         )
         especie_perro = make_especie("Perro", clinica=clinica)
         especie_gato = make_especie("Gato", clinica=clinica)
@@ -525,7 +525,7 @@ class DataMigrationPropertyTest(HypothesisTestCase):
         # Crear una clínica de prueba para los registros
         clinica_test, _ = Clinica.objects.get_or_create(
             email_admin="test_migration@test.cl",
-            defaults={"nombre": "Clínica Test Migración", "activo": True},
+            defaults={"nombre": "Clínica Test Migración"},
         )
 
         # Crear catálogos con clinica (estado post-migración)

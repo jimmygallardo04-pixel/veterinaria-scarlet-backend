@@ -125,6 +125,9 @@ def solicitar_codigo_verificacion(email: str) -> None:
     if not email:
         raise CamposObligatoriosError("El correo electrónico es obligatorio.")
 
+    # Normalizar a lowercase para consistencia con el registro
+    email = email.strip().lower()
+
     try:
         validate_email(email)
     except DjangoValidationError:
@@ -200,7 +203,7 @@ def validar_codigo_verificacion(email: str, codigo: str) -> None:
     """
     Verifica que el código OTP sea correcto, no haya expirado y no haya sido usado.
     Lo marca como usado si es válido. Incrementa intentos_fallidos si es incorrecto
-    y bloquea el código tras CodigoVerificacion.MAX_INTENTOS intentos fallidos.
+    y bloquea el código tras OTP_MAX_INTENTOS intentos fallidos.
 
     Usa select_for_update() para serializar el acceso concurrente y evitar
     race conditions en el conteo de intentos fallidos.
@@ -209,6 +212,9 @@ def validar_codigo_verificacion(email: str, codigo: str) -> None:
         CodigoInvalidoError: Si el código no existe, expiró o ya fue usado.
         CodigoBloqueadoError: Si el código fue bloqueado por demasiados intentos.
     """
+    # Normalizar email para que coincida con el guardado al solicitar
+    email = email.strip().lower()
+
     with transaction.atomic():
         # select_for_update serializa el acceso: evita race condition en intentos_fallidos
         registro = (
@@ -259,15 +265,17 @@ def validar_codigo_verificacion(email: str, codigo: str) -> None:
 
 def email_esta_verificado(email: str) -> bool:
     """
-    Devuelve True si existe un código usado recientemente (últimos 30 min)
-    para este email. Usado por el endpoint de registro para confirmar
+    Devuelve True si existe un código usado recientemente para este email.
+    La ventana de validez es configurable via settings.OTP_VERIFICACION_VENTANA_MINUTOS
+    (default: 30 min). Usado por el endpoint de registro para confirmar
     que el email fue verificado antes de crear la cuenta.
     """
-    hace_30_min = timezone.now() - timedelta(minutes=30)
+    ventana = timedelta(minutes=django_settings.OTP_VERIFICACION_VENTANA_MINUTOS)
+    desde = timezone.now() - ventana
     return CodigoVerificacion.objects.filter(
         email=email,
         usado=True,
-        creado_en__gte=hace_30_min,
+        creado_en__gte=desde,
     ).exists()
 
 
@@ -289,30 +297,33 @@ def registrar_clinica(data: RegistroClinicaInput) -> RegistroClinicaResult:
     if not all([data.nombre_clinica, data.nombre_admin, data.email]):
         raise CamposObligatoriosError("Todos los campos son obligatorios.")
 
+    # Normalizar email a lowercase para consistencia en la DB
+    email = data.email.strip().lower()
+
     try:
-        validate_email(data.email)
+        validate_email(email)
     except DjangoValidationError:
         raise EmailFormatoInvalidoError("El correo electrónico no tiene un formato válido.")
 
-    if _email_en_uso(data.email):
+    if _email_en_uso(email):
         raise EmailYaRegistradoError("Este correo ya está en uso")
 
     if len(data.password) < 8:
         raise PasswordDemasiadoCortaError("La contraseña debe tener al menos 8 caracteres")
 
     # Verificar que el email fue verificado con código OTP
-    if not email_esta_verificado(data.email):
+    if not email_esta_verificado(email):
         raise CamposObligatoriosError("Debes verificar tu correo electrónico antes de registrarte.")
 
     # Crear usuario, clínica y perfil — y generar tokens — en una transacción atómica
     with transaction.atomic():
         clinica = Clinica.objects.create(
             nombre=data.nombre_clinica,
-            email_admin=data.email,
+            email_admin=email,
         )
         user = User.objects.create_user(
-            username=data.email,
-            email=data.email,
+            username=email,
+            email=email,
             password=data.password,
             first_name=data.nombre_clinica,
             last_name=data.nombre_admin,
@@ -327,16 +338,15 @@ def registrar_clinica(data: RegistroClinicaInput) -> RegistroClinicaResult:
         access_token = str(refresh.access_token)
         refresh_token = str(refresh)
 
-    logger.info("Nueva clínica registrada: email=%s clinica='%s'", data.email, data.nombre_clinica)
+    logger.info("Nueva clínica registrada: email=%s clinica='%s'", email, data.nombre_clinica)
 
     # Correo de bienvenida — el error no bloquea el registro
     _enviar_correo_bienvenida(
-        email=data.email,
+        email=email,
         nombre_admin=data.nombre_admin,
         nombre_clinica=data.nombre_clinica,
     )
 
-    # Generar tokens JWT
     return RegistroClinicaResult(
         user=user,
         clinica=clinica,
@@ -443,7 +453,15 @@ def crear_veterinario(data: CrearVeterinarioInput, clinica: "Clinica") -> Veteri
     if not all([data.nombre, data.email]):
         raise CamposObligatoriosError("Nombre y correo son obligatorios.")
 
-    if _email_en_uso(data.email):
+    # Normalizar email a lowercase para consistencia en la DB
+    email = data.email.strip().lower()
+
+    try:
+        validate_email(email)
+    except DjangoValidationError:
+        raise EmailFormatoInvalidoError("El correo electrónico no tiene un formato válido.")
+
+    if _email_en_uso(email):
         raise EmailYaRegistradoError("Este correo ya está en uso.")
 
     if len(data.password) < 8:
@@ -451,8 +469,8 @@ def crear_veterinario(data: CrearVeterinarioInput, clinica: "Clinica") -> Veteri
 
     with transaction.atomic():
         user = User.objects.create_user(
-            username=data.email,
-            email=data.email,
+            username=email,
+            email=email,
             password=data.password,
             first_name=data.nombre,
         )
@@ -462,7 +480,7 @@ def crear_veterinario(data: CrearVeterinarioInput, clinica: "Clinica") -> Veteri
             rol=PerfilUsuario.Rol.VETERINARIO,
         )
 
-    logger.info("Veterinario creado: email=%s nombre='%s' clinica=%s", data.email, data.nombre, clinica.id)
+    logger.info("Veterinario creado: email=%s nombre='%s' clinica=%s", email, data.nombre, clinica.id)
     return VeterinarioResult(
         id=user.id,
         nombre=user.first_name,
@@ -520,12 +538,19 @@ def editar_veterinario(user_id: int, data: EditarVeterinarioInput, clinica: "Cli
         raise NoSePuedeEliminarAdminError("No se puede editar un usuario administrador.")
 
     if data.email and data.email != user.email:
+        nuevo_email = data.email.strip().lower()
         try:
-            validate_email(data.email)
+            validate_email(nuevo_email)
         except DjangoValidationError:
             raise EmailFormatoInvalidoError("El correo electrónico no tiene un formato válido.")
-        if _email_en_uso(data.email, exclude_pk=user_id):
+        if _email_en_uso(nuevo_email, exclude_pk=user_id):
             raise EmailYaRegistradoError("Este correo ya está en uso.")
+        # Reasignar normalizado para que se guarde en lowercase
+        data = EditarVeterinarioInput(
+            nombre=data.nombre,
+            email=nuevo_email,
+            password=data.password,
+        )
 
     if data.password is not None and len(data.password) < 8:
         raise PasswordDemasiadoCortaError("La contraseña debe tener al menos 8 caracteres.")

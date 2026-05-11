@@ -63,6 +63,8 @@ EMAIL_FROM = os.getenv("EMAIL_FROM", "noreply@veterinariascarlet.cl")
 # ── OTP ────────────────────────────────────────────────────────────────────────
 # Número máximo de intentos fallidos antes de bloquear un código OTP.
 OTP_MAX_INTENTOS = int(os.getenv("OTP_MAX_INTENTOS", "3"))
+# Minutos de validez de la verificación OTP para completar el registro.
+OTP_VERIFICACION_VENTANA_MINUTOS = int(os.getenv("OTP_VERIFICACION_VENTANA_MINUTOS", "30"))
 
 # Render y otros proxies envían este header para indicar HTTPS
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
@@ -83,7 +85,7 @@ if not DEBUG:
     X_FRAME_OPTIONS = "DENY"
 else:
     logger.warning(
-        "⚠️  DEBUG=True — las cabeceras de seguridad HTTPS están desactivadas. "
+        "DEBUG=True — las cabeceras de seguridad HTTPS están desactivadas. "
         "No usar esta configuración en producción."
     )
 
