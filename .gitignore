@@ -1,0 +1,33 @@
+# Secretos — nunca commitear
+.env
+claves_secreta.txt
+
+# El .env.example SÍ debe estar en el repo (no tiene valores reales)
+!.env.example
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Django
+db.sqlite3
+staticfiles/
+media/
+
+# Tests y cobertura
+.pytest_cache/
+.hypothesis/
+htmlcov/
+.coverage
+coverage.xml
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
