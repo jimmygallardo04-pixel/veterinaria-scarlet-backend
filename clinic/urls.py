@@ -1,18 +1,26 @@
-from django.urls import path, include
+"""
+URLs del módulo clinic — montadas bajo /api/v1/ por config/urls.py.
+"""
+
+from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from .views import (
-    TutorViewSet,
-    PacienteViewSet,
-    FichaClinicaViewSet,
-    CitaViewSet,
-    VacunaViewSet,
-    TratamientoViewSet,
+    AlertaClinicaViewSet,
     ArchivoDocumentoViewSet,
+    CitaViewSet,
     EspecieViewSet,
+    FichaClinicaViewSet,
+    PacienteViewSet,
     SexoPacienteViewSet,
     TipoArchivoDocumentoViewSet,
-    AlertaClinicaViewSet,
+    TratamientoViewSet,
+    TutorViewSet,
+    VacunaViewSet,
+    solicitar_codigo_view,
+    validar_codigo_view,
+    veterinario_detail_view,
+    veterinarios_view,
 )
 
 router = DefaultRouter()
@@ -30,4 +38,8 @@ router.register(r"alertas", AlertaClinicaViewSet, basename="alertas")
 
 urlpatterns = [
     path("", include(router.urls)),
+    path("veterinarios/", veterinarios_view, name="veterinarios"),
+    path("veterinarios/<int:pk>/", veterinario_detail_view, name="veterinario-detail"),
+    path("verificar-email/solicitar/", solicitar_codigo_view, name="solicitar-codigo"),
+    path("verificar-email/validar/", validar_codigo_view, name="validar-codigo"),
 ]
