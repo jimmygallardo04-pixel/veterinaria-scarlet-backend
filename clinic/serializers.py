@@ -203,12 +203,11 @@ class PacienteSerializer(serializers.ModelSerializer):
     tutor_nombre = serializers.CharField(source="tutor.nombre", read_only=True)
     especie_nombre = serializers.CharField(source="especie.nombre", read_only=True)
     sexo_nombre = serializers.CharField(source="sexo.nombre", read_only=True)
-    edad = serializers.ReadOnlyField()
 
     class Meta:
         model = Paciente
         exclude = AUDIT_FIELDS
-        read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY, "tutor_nombre", "especie_nombre", "sexo_nombre", "edad")
+        read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY, "tutor_nombre", "especie_nombre", "sexo_nombre")
 
     def validate_fecha_nacimiento(self, value):
         """La fecha de nacimiento no puede ser futura."""
