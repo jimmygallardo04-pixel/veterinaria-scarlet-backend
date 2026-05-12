@@ -346,6 +346,7 @@ class FichaClinicaDetalleSerializer(serializers.ModelSerializer):
     """
 
     paciente = PacienteSerializer(read_only=True)
+    fecha_nacimiento = serializers.DateField(source="paciente.fecha_nacimiento", read_only=True)
 
     vacunas = serializers.SerializerMethodField()
     tratamientos = serializers.SerializerMethodField()
