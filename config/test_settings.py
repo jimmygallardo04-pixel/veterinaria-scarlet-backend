@@ -31,3 +31,6 @@ CACHES = {
         "BACKEND": "django.core.cache.backends.dummy.DummyCache",
     }
 }
+
+# Explicit: store datetimes in UTC (aware). SQLite supports this since Django 4.x.
+USE_TZ = True

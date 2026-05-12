@@ -346,7 +346,9 @@ class ArchivoDocumento(BaseModel):
     archivo_url = models.URLField()
     storage_path = models.CharField(max_length=500, blank=True, null=True)
 
-    fecha = models.DateField(default=timezone.now, db_index=True)
+    # date.today() usa la fecha local del servidor (America/Santiago con USE_TZ=True).
+    # timezone.now() devolvería la fecha UTC, que puede diferir de la local en la noche.
+    fecha = models.DateField(default=date.today, db_index=True)
     observaciones = models.TextField(blank=True, null=True)
 
     class Meta:
@@ -380,6 +382,9 @@ class CodigoVerificacion(models.Model):
         indexes = [
             models.Index(fields=["email", "usado"], name="idx_codigo_email_usado"),
             models.Index(fields=["email", "creado_en"], name="idx_codigo_email_creado"),
+            models.Index(fields=["expira_en"], name="idx_codigo_expira_en"),
+            # Cubre la query de email_esta_verificado: filter(email, usado=True, creado_en__gte)
+            models.Index(fields=["email", "usado", "creado_en"], name="idx_codigo_verificado"),
         ]
 
     def __str__(self) -> str:

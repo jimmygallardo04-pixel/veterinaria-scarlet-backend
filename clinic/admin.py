@@ -4,16 +4,27 @@ Configuración del admin de Django para Veterinaria Scarlet.
 Cada ModelAdmin define los campos visibles en la lista, los filtros
 laterales y los campos de búsqueda para facilitar la gestión de datos
 desde el panel de administración.
+
+Soft-delete:
+    Los modelos que heredan de BaseModel tienen un campo `eliminado_en`.
+    Por defecto el ActiveManager los oculta. Cada ModelAdmin que soporte
+    soft-delete incluye:
+      - Un filtro "Mostrar eliminados" para verlos.
+      - Una acción "Restaurar seleccionados" para reactivarlos.
+      - `get_queryset` que usa `all_objects` para que el admin pueda verlos.
 """
 
 from django.contrib import admin
+from django.utils import timezone
 
 from .models import (
     ArchivoDocumento,
     Cita,
+    Clinica,
     Especie,
     FichaClinica,
     Paciente,
+    PerfilUsuario,
     SexoPaciente,
     TipoArchivoDocumento,
     Tratamiento,
@@ -22,27 +33,84 @@ from .models import (
 )
 
 
+# ─── Mixin: soporte de soft-delete en el admin ────────────────────────────────
+
+class SoftDeleteAdminMixin:
+    """
+    Mixin para ModelAdmin que añade:
+      - Visibilidad de registros soft-deleted (usa all_objects).
+      - Filtro lateral "Estado" (activo / eliminado).
+      - Acción "Restaurar seleccionados".
+      - Acción "Eliminar (soft-delete) seleccionados".
+    """
+
+    def get_queryset(self, request):
+        # Usar all_objects para que el admin vea también los eliminados
+        return self.model.all_objects.all()
+
+    @admin.action(description="Restaurar seleccionados (deshacer eliminación)")
+    def restaurar_seleccionados(self, request, queryset):
+        count = queryset.update(eliminado_en=None)
+        self.message_user(request, f"{count} registro(s) restaurado(s).")
+
+    @admin.action(description="Soft-delete seleccionados")
+    def soft_delete_seleccionados(self, request, queryset):
+        count = queryset.filter(eliminado_en__isnull=True).update(
+            eliminado_en=timezone.now()
+        )
+        self.message_user(request, f"{count} registro(s) marcado(s) como eliminado(s).")
+
+    actions = ["restaurar_seleccionados", "soft_delete_seleccionados"]
+
+    def estado_soft_delete(self, obj):
+        return "✅ Activo" if obj.eliminado_en is None else "🗑 Eliminado"
+    estado_soft_delete.short_description = "Estado"
+
+
+# ─── Multi-tenancy ────────────────────────────────────────────────────────────
+
+@admin.register(Clinica)
+class ClinicaAdmin(admin.ModelAdmin):
+    list_display = ("nombre", "email_admin", "creado_en")
+    search_fields = ("nombre", "email_admin")
+    ordering = ("nombre",)
+    readonly_fields = ("creado_en",)
+
+
+@admin.register(PerfilUsuario)
+class PerfilUsuarioAdmin(admin.ModelAdmin):
+    list_display = ("user", "clinica", "rol")
+    list_filter = ("rol", "clinica")
+    search_fields = ("user__email", "user__first_name", "clinica__nombre")
+    ordering = ("clinica__nombre", "user__email")
+    autocomplete_fields = ("clinica",)
+    raw_id_fields = ("user",)
+
+
 # ─── Catálogos ────────────────────────────────────────────────────────────────
 
 @admin.register(Especie)
-class EspecieAdmin(admin.ModelAdmin):
-    list_display = ("nombre", "creado_en")
+class EspecieAdmin(SoftDeleteAdminMixin, admin.ModelAdmin):
+    list_display = ("nombre", "clinica", "estado_soft_delete", "creado_en")
+    list_filter = ("clinica",)
     search_fields = ("nombre",)
     ordering = ("nombre",)
     readonly_fields = ("creado_en", "actualizado_en")
 
 
 @admin.register(SexoPaciente)
-class SexoPacienteAdmin(admin.ModelAdmin):
-    list_display = ("nombre", "creado_en")
+class SexoPacienteAdmin(SoftDeleteAdminMixin, admin.ModelAdmin):
+    list_display = ("nombre", "clinica", "estado_soft_delete", "creado_en")
+    list_filter = ("clinica",)
     search_fields = ("nombre",)
     ordering = ("nombre",)
     readonly_fields = ("creado_en", "actualizado_en")
 
 
 @admin.register(TipoArchivoDocumento)
-class TipoArchivoDocumentoAdmin(admin.ModelAdmin):
-    list_display = ("nombre", "creado_en")
+class TipoArchivoDocumentoAdmin(SoftDeleteAdminMixin, admin.ModelAdmin):
+    list_display = ("nombre", "clinica", "estado_soft_delete", "creado_en")
+    list_filter = ("clinica",)
     search_fields = ("nombre",)
     ordering = ("nombre",)
     readonly_fields = ("creado_en", "actualizado_en")
@@ -51,17 +119,18 @@ class TipoArchivoDocumentoAdmin(admin.ModelAdmin):
 # ─── Entidades principales ────────────────────────────────────────────────────
 
 @admin.register(Tutor)
-class TutorAdmin(admin.ModelAdmin):
-    list_display = ("nombre", "telefono", "email", "rut", "creado_en")
+class TutorAdmin(SoftDeleteAdminMixin, admin.ModelAdmin):
+    list_display = ("nombre", "clinica", "telefono", "email", "rut", "estado_soft_delete", "creado_en")
+    list_filter = ("clinica",)
     search_fields = ("nombre", "rut", "email", "telefono")
     ordering = ("nombre",)
     readonly_fields = ("creado_en", "actualizado_en")
 
 
 @admin.register(Paciente)
-class PacienteAdmin(admin.ModelAdmin):
-    list_display = ("nombre", "especie", "tutor", "sexo", "esterilizado", "creado_en")
-    list_filter = ("especie", "sexo", "esterilizado")
+class PacienteAdmin(SoftDeleteAdminMixin, admin.ModelAdmin):
+    list_display = ("nombre", "clinica", "especie", "tutor", "sexo", "esterilizado", "estado_soft_delete", "creado_en")
+    list_filter = ("clinica", "especie", "sexo", "esterilizado")
     search_fields = ("nombre", "tutor__nombre", "raza", "color")
     ordering = ("-creado_en",)
     readonly_fields = ("creado_en", "actualizado_en", "edad")
@@ -69,9 +138,9 @@ class PacienteAdmin(admin.ModelAdmin):
 
 
 @admin.register(FichaClinica)
-class FichaClinicaAdmin(admin.ModelAdmin):
-    list_display = ("paciente", "fecha", "motivo_consulta", "diagnostico", "creado_en")
-    list_filter = ("fecha",)
+class FichaClinicaAdmin(SoftDeleteAdminMixin, admin.ModelAdmin):
+    list_display = ("paciente", "clinica", "fecha", "motivo_consulta", "diagnostico", "estado_soft_delete", "creado_en")
+    list_filter = ("clinica", "fecha")
     search_fields = ("paciente__nombre", "motivo_consulta", "diagnostico")
     ordering = ("-fecha",)
     readonly_fields = ("creado_en", "actualizado_en")
@@ -80,9 +149,9 @@ class FichaClinicaAdmin(admin.ModelAdmin):
 
 
 @admin.register(Cita)
-class CitaAdmin(admin.ModelAdmin):
-    list_display = ("paciente", "tutor", "fecha_hora", "estado", "motivo")
-    list_filter = ("estado", "fecha_hora")
+class CitaAdmin(SoftDeleteAdminMixin, admin.ModelAdmin):
+    list_display = ("paciente", "clinica", "tutor", "fecha_hora", "estado", "motivo", "estado_soft_delete")
+    list_filter = ("clinica", "estado", "fecha_hora")
     search_fields = ("paciente__nombre", "tutor__nombre", "motivo")
     ordering = ("-fecha_hora",)
     readonly_fields = ("creado_en", "actualizado_en")
@@ -91,9 +160,9 @@ class CitaAdmin(admin.ModelAdmin):
 
 
 @admin.register(Vacuna)
-class VacunaAdmin(admin.ModelAdmin):
-    list_display = ("nombre_vacuna", "paciente", "fecha_aplicacion", "proxima_dosis")
-    list_filter = ("fecha_aplicacion", "proxima_dosis")
+class VacunaAdmin(SoftDeleteAdminMixin, admin.ModelAdmin):
+    list_display = ("nombre_vacuna", "clinica", "paciente", "fecha_aplicacion", "proxima_dosis", "estado_soft_delete")
+    list_filter = ("clinica", "fecha_aplicacion", "proxima_dosis")
     search_fields = ("nombre_vacuna", "paciente__nombre")
     ordering = ("-fecha_aplicacion",)
     readonly_fields = ("creado_en", "actualizado_en")
@@ -101,9 +170,9 @@ class VacunaAdmin(admin.ModelAdmin):
 
 
 @admin.register(Tratamiento)
-class TratamientoAdmin(admin.ModelAdmin):
-    list_display = ("medicamento", "paciente", "dosis", "frecuencia", "fecha_inicio", "fecha_fin")
-    list_filter = ("fecha_inicio", "fecha_fin")
+class TratamientoAdmin(SoftDeleteAdminMixin, admin.ModelAdmin):
+    list_display = ("medicamento", "clinica", "paciente", "dosis", "frecuencia", "fecha_inicio", "fecha_fin", "estado_soft_delete")
+    list_filter = ("clinica", "fecha_inicio", "fecha_fin")
     search_fields = ("medicamento", "paciente__nombre")
     ordering = ("-fecha_inicio",)
     readonly_fields = ("creado_en", "actualizado_en")
@@ -111,9 +180,9 @@ class TratamientoAdmin(admin.ModelAdmin):
 
 
 @admin.register(ArchivoDocumento)
-class ArchivoDocumentoAdmin(admin.ModelAdmin):
-    list_display = ("paciente", "tipo", "fecha", "archivo_url")
-    list_filter = ("tipo", "fecha")
+class ArchivoDocumentoAdmin(SoftDeleteAdminMixin, admin.ModelAdmin):
+    list_display = ("paciente", "clinica", "tipo", "fecha", "archivo_url", "estado_soft_delete")
+    list_filter = ("clinica", "tipo", "fecha")
     search_fields = ("paciente__nombre", "tipo__nombre")
     ordering = ("-fecha",)
     readonly_fields = ("creado_en", "actualizado_en")

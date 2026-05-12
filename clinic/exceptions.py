@@ -17,6 +17,7 @@ Formato de respuesta de error:
 import logging
 
 from django.core.exceptions import PermissionDenied
+from django.db import IntegrityError
 from django.http import Http404
 
 from rest_framework import status
@@ -25,6 +26,7 @@ from rest_framework.exceptions import (
     MethodNotAllowed,
     NotAuthenticated,
     NotFound,
+    ParseError,
     PermissionDenied as DRFPermissionDenied,
     Throttled,
     ValidationError,
@@ -45,6 +47,7 @@ _ERROR_MAP: dict[type, tuple[str, str]] = {
     MethodNotAllowed: ("METHOD_NOT_ALLOWED", "Método HTTP no permitido."),
     Throttled: ("THROTTLED", "Demasiadas solicitudes. Intenta más tarde."),
     ValidationError: ("VALIDATION_ERROR", "Los datos enviados no son válidos."),
+    ParseError: ("PARSE_ERROR", "El cuerpo de la solicitud no tiene un formato válido."),
 }
 
 
@@ -59,12 +62,33 @@ def custom_exception_handler(exc: Exception, context: dict) -> Response | None:
     # Dejar que DRF procese primero para obtener el Response base
     response = drf_default_handler(exc, context)
 
-    # Errores no manejados por DRF (Django nativo Http404, PermissionDenied)
+    # Errores no manejados por DRF (Django nativo Http404, PermissionDenied, IntegrityError)
     if response is None:
         if isinstance(exc, Http404):
             response = Response(status=status.HTTP_404_NOT_FOUND)
         elif isinstance(exc, PermissionDenied):
             response = Response(status=status.HTTP_403_FORBIDDEN)
+        elif isinstance(exc, IntegrityError):
+            # Constraint de DB violada — loguearlo con detalle para diagnóstico
+            view = context.get("view")
+            request = context.get("request")
+            logger.error(
+                "IntegrityError en %s %s — vista: %s — detalle: %s",
+                getattr(request, "method", "?"),
+                getattr(request, "path", "?"),
+                view.__class__.__name__ if view else "?",
+                str(exc),
+                exc_info=exc,
+            )
+            return Response(
+                {
+                    "error": {
+                        "code": "CONFLICT",
+                        "message": "El recurso ya existe o viola una restricción de unicidad.",
+                    }
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         else:
             # Error inesperado — loguearlo con contexto completo
             view = context.get("view")

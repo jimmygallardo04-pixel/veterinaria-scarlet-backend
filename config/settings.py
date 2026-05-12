@@ -53,8 +53,22 @@ ALLOWED_HOSTS = _split_env_list("ALLOWED_HOSTS")
 CSRF_TRUSTED_ORIGINS = _normalize_csrf_trusted_origins(_split_env_list("CSRF_TRUSTED_ORIGINS"))
 
 # Clave secreta requerida para crear nuevas clínicas vía /api/v1/registro/.
-# Si no está configurada, el endpoint de registro queda deshabilitado.
+# Si no está configurada, el endpoint de registro queda abierto (cualquiera puede registrar).
 REGISTRO_SECRET_KEY = os.getenv("REGISTRO_SECRET_KEY", "")
+
+# Solo advertir en producción/desarrollo, no en tests (donde la clave vacía es intencional).
+# Se detecta el entorno de test por variable de entorno explícita o por el módulo de settings.
+import sys as _sys
+_is_testing = (
+    os.environ.get("TESTING", "").lower() in ("1", "true", "yes")
+    or "test" in os.environ.get("DJANGO_SETTINGS_MODULE", "").lower()
+    or (len(_sys.argv) > 0 and _sys.argv[0].endswith(("pytest", "pytest.exe", "py.test")))
+)
+if not REGISTRO_SECRET_KEY and not _is_testing:
+    logger.warning(
+        "REGISTRO_SECRET_KEY no está configurada — el endpoint /registro/ está abierto. "
+        "Configura esta variable en producción para restringir el registro de clínicas."
+    )
 
 # ── Email / Resend ─────────────────────────────────────────────────────────────
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
@@ -199,7 +213,7 @@ AUTH_PASSWORD_VALIDATORS = [
 LANGUAGE_CODE = "es-cl"
 TIME_ZONE = "America/Santiago"
 USE_I18N = True
-USE_TZ = False  # El backend almacena fechas sin timezone (naive datetimes)
+USE_TZ = True  # Todas las fechas se almacenan en UTC; se convierten a TIME_ZONE al mostrar
 
 # ─── Archivos estáticos ───────────────────────────────────────────────────────
 
@@ -237,10 +251,15 @@ REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 
+# Paginación — configurable sin tocar código
+API_PAGE_SIZE = int(os.getenv("API_PAGE_SIZE", "20"))
+API_MAX_PAGE_SIZE = int(os.getenv("API_MAX_PAGE_SIZE", "100"))
+
 # ─── JWT ──────────────────────────────────────────────────────────────────────
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(hours=1),   # reducido de 12h a 1h
+    "ACCESS_TOKEN_LIFETIME": timedelta(hours=1),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
