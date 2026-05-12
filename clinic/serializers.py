@@ -347,6 +347,12 @@ class FichaClinicaDetalleSerializer(serializers.ModelSerializer):
     paciente = PacienteSerializer(read_only=True)
     fecha_nacimiento = serializers.DateField(source="paciente.fecha_nacimiento", read_only=True)
 
+    # Campos aplanados del paciente para acceso directo desde el frontend
+    paciente_nombre = serializers.CharField(source="paciente.nombre", read_only=True)
+    tutor_nombre = serializers.CharField(source="paciente.tutor.nombre", read_only=True)
+    especie_nombre = serializers.CharField(source="paciente.especie.nombre", read_only=True)
+    sexo_nombre = serializers.CharField(source="paciente.sexo.nombre", read_only=True)
+
     vacunas = serializers.SerializerMethodField()
     tratamientos = serializers.SerializerMethodField()
     archivos = serializers.SerializerMethodField()
@@ -358,6 +364,7 @@ class FichaClinicaDetalleSerializer(serializers.ModelSerializer):
         read_only_fields = (
             *BASE_READ_ONLY,
             *TENANT_READ_ONLY,
+            "paciente_nombre", "tutor_nombre", "especie_nombre", "sexo_nombre",
             "vacunas", "tratamientos", "archivos", "historial_fichas",
         )
 
