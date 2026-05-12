@@ -1,0 +1,4 @@
+Crea nuevamente el admin desde Render:
+python manage.py createsuperuser
+
+https://api.veterinaria-scarlet.cl/admin/

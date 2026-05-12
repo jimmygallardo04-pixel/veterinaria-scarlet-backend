@@ -317,3 +317,156 @@ class VeterinariosViewTest(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertIn("administrador", response.json().get("detail", ""))
+
+
+# ─── Fix 3: Tests de aislamiento de tenant para ViewSets con get_queryset ─────
+
+class TenantAislamientoViewSetTest(TestCase):
+    """
+    Verifica que CitaViewSet, VacunaViewSet, TratamientoViewSet y
+    ArchivoDocumentoViewSet aplican el filtro de tenant correctamente.
+
+    Cada ViewSet sobreescribe get_queryset() — estos tests garantizan que
+    el filtro de clínica no se omite accidentalmente en futuras refactorizaciones.
+    """
+
+    def setUp(self):
+        from clinic.models import (
+            Cita, Especie, FichaClinica, Paciente, PerfilUsuario,
+            SexoPaciente, TipoArchivoDocumento, Tratamiento, Vacuna,
+        )
+        from django.utils import timezone
+        from datetime import date
+
+        self.client = APIClient()
+
+        # Dos clínicas independientes
+        self.clinica_a = make_clinica("Clínica Tenant A")
+        self.clinica_b = make_clinica("Clínica Tenant B")
+
+        # Un usuario por clínica
+        self.user_a = make_user(username="tenant_user_a", clinica=self.clinica_a)
+        self.user_b = make_user(username="tenant_user_b", clinica=self.clinica_b)
+
+        # Datos de soporte para clínica A
+        especie_a = Especie.objects.create(nombre="Perro Tenant A", clinica=self.clinica_a)
+        sexo_a = SexoPaciente.objects.create(nombre="Macho Tenant A", clinica=self.clinica_a)
+        tutor_a = Tutor.objects.create(nombre="Tutor Tenant A", telefono="111", clinica=self.clinica_a)
+        self.paciente_a = Paciente.objects.create(
+            nombre="Paciente A", tutor=tutor_a, especie=especie_a, sexo=sexo_a, clinica=self.clinica_a
+        )
+
+        # Datos de soporte para clínica B
+        especie_b = Especie.objects.create(nombre="Gato Tenant B", clinica=self.clinica_b)
+        sexo_b = SexoPaciente.objects.create(nombre="Hembra Tenant B", clinica=self.clinica_b)
+        tutor_b = Tutor.objects.create(nombre="Tutor Tenant B", telefono="222", clinica=self.clinica_b)
+        self.paciente_b = Paciente.objects.create(
+            nombre="Paciente B", tutor=tutor_b, especie=especie_b, sexo=sexo_b, clinica=self.clinica_b
+        )
+
+        # Citas
+        self.cita_a = Cita.objects.create(
+            paciente=self.paciente_a, tutor=tutor_a, fecha_hora=timezone.now(),
+            motivo="Consulta A", clinica=self.clinica_a,
+        )
+        self.cita_b = Cita.objects.create(
+            paciente=self.paciente_b, tutor=tutor_b, fecha_hora=timezone.now(),
+            motivo="Consulta B", clinica=self.clinica_b,
+        )
+
+        # Vacunas
+        self.vacuna_a = Vacuna.objects.create(
+            paciente=self.paciente_a, nombre_vacuna="Rabia A",
+            fecha_aplicacion=date.today(), clinica=self.clinica_a,
+        )
+        self.vacuna_b = Vacuna.objects.create(
+            paciente=self.paciente_b, nombre_vacuna="Rabia B",
+            fecha_aplicacion=date.today(), clinica=self.clinica_b,
+        )
+
+        # Tratamientos
+        self.tratamiento_a = Tratamiento.objects.create(
+            paciente=self.paciente_a, medicamento="Med A", dosis="1mg",
+            frecuencia="Diario", fecha_inicio=date.today(), clinica=self.clinica_a,
+        )
+        self.tratamiento_b = Tratamiento.objects.create(
+            paciente=self.paciente_b, medicamento="Med B", dosis="2mg",
+            frecuencia="Diario", fecha_inicio=date.today(), clinica=self.clinica_b,
+        )
+
+        # Archivos
+        tipo_a = TipoArchivoDocumento.objects.create(nombre="Rx A", clinica=self.clinica_a)
+        tipo_b = TipoArchivoDocumento.objects.create(nombre="Rx B", clinica=self.clinica_b)
+        self.archivo_a = ArchivoDocumento.objects.create(
+            paciente=self.paciente_a, tipo=tipo_a,
+            archivo_url="https://example.com/a.pdf", clinica=self.clinica_a,
+        )
+        self.archivo_b = ArchivoDocumento.objects.create(
+            paciente=self.paciente_b, tipo=tipo_b,
+            archivo_url="https://example.com/b.pdf", clinica=self.clinica_b,
+        )
+
+    def _ids(self, response):
+        data = response.json()
+        items = data.get("results", data) if isinstance(data, dict) else data
+        return {item["id"] for item in items}
+
+    # ── Citas ─────────────────────────────────────────────────────────────────
+
+    def test_citas_solo_devuelve_de_clinica_propia(self):
+        self.client.force_authenticate(user=self.user_a)
+        response = self.client.get("/api/v1/citas/")
+        self.assertEqual(response.status_code, 200)
+        ids = self._ids(response)
+        self.assertIn(self.cita_a.id, ids)
+        self.assertNotIn(self.cita_b.id, ids)
+
+    def test_citas_no_accede_a_cita_de_otra_clinica(self):
+        self.client.force_authenticate(user=self.user_a)
+        response = self.client.get(f"/api/v1/citas/{self.cita_b.id}/")
+        self.assertEqual(response.status_code, 404)
+
+    # ── Vacunas ───────────────────────────────────────────────────────────────
+
+    def test_vacunas_solo_devuelve_de_clinica_propia(self):
+        self.client.force_authenticate(user=self.user_a)
+        response = self.client.get("/api/v1/vacunas/")
+        self.assertEqual(response.status_code, 200)
+        ids = self._ids(response)
+        self.assertIn(self.vacuna_a.id, ids)
+        self.assertNotIn(self.vacuna_b.id, ids)
+
+    def test_vacunas_no_accede_a_vacuna_de_otra_clinica(self):
+        self.client.force_authenticate(user=self.user_a)
+        response = self.client.get(f"/api/v1/vacunas/{self.vacuna_b.id}/")
+        self.assertEqual(response.status_code, 404)
+
+    # ── Tratamientos ──────────────────────────────────────────────────────────
+
+    def test_tratamientos_solo_devuelve_de_clinica_propia(self):
+        self.client.force_authenticate(user=self.user_a)
+        response = self.client.get("/api/v1/tratamientos/")
+        self.assertEqual(response.status_code, 200)
+        ids = self._ids(response)
+        self.assertIn(self.tratamiento_a.id, ids)
+        self.assertNotIn(self.tratamiento_b.id, ids)
+
+    def test_tratamientos_no_accede_a_tratamiento_de_otra_clinica(self):
+        self.client.force_authenticate(user=self.user_a)
+        response = self.client.get(f"/api/v1/tratamientos/{self.tratamiento_b.id}/")
+        self.assertEqual(response.status_code, 404)
+
+    # ── Archivos ──────────────────────────────────────────────────────────────
+
+    def test_archivos_solo_devuelve_de_clinica_propia(self):
+        self.client.force_authenticate(user=self.user_a)
+        response = self.client.get("/api/v1/archivos/")
+        self.assertEqual(response.status_code, 200)
+        ids = self._ids(response)
+        self.assertIn(self.archivo_a.id, ids)
+        self.assertNotIn(self.archivo_b.id, ids)
+
+    def test_archivos_no_accede_a_archivo_de_otra_clinica(self):
+        self.client.force_authenticate(user=self.user_a)
+        response = self.client.get(f"/api/v1/archivos/{self.archivo_b.id}/")
+        self.assertEqual(response.status_code, 404)

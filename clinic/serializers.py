@@ -118,14 +118,18 @@ class _SoftDeleteNombreValidatorMixin:
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
         conflicto = qs.first()
-        if conflicto and conflicto.eliminado_en is not None:
+        if conflicto is None:
+            return value
+        if conflicto.eliminado_en is not None:
             raise serializers.ValidationError(
                 f"Ya existe {self._articulo} {self._nombre_entidad} llamado"
                 f"{'a' if self._articulo == 'una' else ''} '{value}' que fue eliminado"
                 f"{'a' if self._articulo == 'una' else ''}. "
                 "Contacta al administrador para restaurarlo."
             )
-        return value
+        raise serializers.ValidationError(
+            f"Ya existe {self._articulo} {self._nombre_entidad} con ese nombre."
+        )
 
 
 class EspecieSerializer(_SoftDeleteNombreValidatorMixin, serializers.ModelSerializer):
@@ -170,13 +174,26 @@ class TutorSerializer(serializers.ModelSerializer):
         read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY)
 
     def validate_rut(self, value):
-        """Valida formato básico de RUT chileno: 12345678-9 o 1234567-K."""
+        """Valida formato y dígito verificador del RUT chileno: 12345678-9 o 1234567-K."""
         if value is None or value == "":
             return value
         value = value.strip().upper()
-        if not re.match(r"^\d{1,8}-[\dKk]$", value):
+        if not re.match(r"^\d{1,8}-[\dK]$", value):
             raise serializers.ValidationError(
                 "Formato de RUT inválido. Use el formato 12345678-9."
+            )
+        # Validar dígito verificador con módulo 11
+        cuerpo, dv_ingresado = value.split("-")
+        suma = 0
+        multiplicador = 2
+        for digito in reversed(cuerpo):
+            suma += int(digito) * multiplicador
+            multiplicador = multiplicador + 1 if multiplicador < 7 else 2
+        resto = suma % 11
+        dv_calculado = "K" if resto == 1 else ("0" if resto == 0 else str(11 - resto))
+        if dv_ingresado != dv_calculado:
+            raise serializers.ValidationError(
+                f"RUT inválido: el dígito verificador no corresponde."
             )
         return value
 
@@ -211,6 +228,9 @@ class FichaClinicaSerializer(serializers.ModelSerializer):
         model = FichaClinica
         exclude = AUDIT_FIELDS
         read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY, "paciente_nombre")
+        # NOTA: El campo `fecha` es un DateTimeField con USE_TZ=True, por lo que se
+        # serializa en UTC (ISO 8601 con 'Z'). El frontend debe convertirlo a la zona
+        # horaria local del usuario para mostrarlo correctamente.
 
     def validate_peso_kg(self, value):
         # Los validators del modelo (MinValueValidator/MaxValueValidator) ya validan
@@ -344,23 +364,18 @@ class FichaClinicaDetalleSerializer(serializers.ModelSerializer):
     # Los métodos filtran sobre el prefetch_related del ViewSet (sin queries extra).
 
     def get_vacunas(self, obj):
-        # El Prefetch en FichaClinicaViewSet ya filtra eliminado_en__isnull=True,
-        # por lo que no es necesario filtrar de nuevo en Python.
-        qs = sorted(obj.paciente.vacunas.all(), key=lambda v: v.fecha_aplicacion, reverse=True)
-        return VacunaSerializer(qs, many=True, context=self.context).data
+        # El Prefetch en FichaClinicaViewSet ya filtra eliminado_en__isnull=True.
+        # El modelo Vacuna tiene Meta.ordering = ["-fecha_aplicacion"], así que
+        # el queryset ya viene ordenado correctamente desde la DB.
+        return VacunaSerializer(obj.paciente.vacunas.all(), many=True, context=self.context).data
 
     def get_tratamientos(self, obj):
-        qs = sorted(obj.paciente.tratamientos.all(), key=lambda t: t.fecha_inicio, reverse=True)
-        return TratamientoSerializer(qs, many=True, context=self.context).data
+        return TratamientoSerializer(obj.paciente.tratamientos.all(), many=True, context=self.context).data
 
     def get_archivos(self, obj):
-        qs = sorted(obj.paciente.archivos.all(), key=lambda a: a.fecha, reverse=True)
-        return ArchivoDocumentoSerializer(qs, many=True, context=self.context).data
+        return ArchivoDocumentoSerializer(obj.paciente.archivos.all(), many=True, context=self.context).data
 
     def get_historial_fichas(self, obj):
-        qs = sorted(
-            (f for f in obj.paciente.fichas.all() if f.id != obj.id),
-            key=lambda f: f.fecha,
-            reverse=True,
-        )
+        # Excluir la ficha actual del historial
+        qs = [f for f in obj.paciente.fichas.all() if f.id != obj.id]
         return FichaClinicaSerializer(qs, many=True, context=self.context).data

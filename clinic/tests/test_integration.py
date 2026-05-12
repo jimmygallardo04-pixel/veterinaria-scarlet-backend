@@ -7,6 +7,7 @@ Todos los endpoints usan el prefijo /api/v1/.
 from datetime import timedelta
 
 from django.contrib.auth.models import User
+from django.test import override_settings
 from django.utils import timezone
 from hypothesis import HealthCheck, given
 from hypothesis import settings as hyp_settings
@@ -307,6 +308,7 @@ class BusquedaGlobalPacientesTest(HypothesisTestCase):
 
 # ─── Propiedad 21: Email duplicado → HTTP 400 ─────────────────────────────────
 
+@override_settings(REGISTRO_SECRET_KEY="")
 class RegistroEmailDuplicadoTest(HypothesisTestCase):
     """
     POST /api/v1/registro/ con email ya registrado devuelve HTTP 400.
@@ -343,6 +345,7 @@ class RegistroEmailDuplicadoTest(HypothesisTestCase):
 
 # ─── Propiedad 22: Contraseña corta → HTTP 400 ────────────────────────────────
 
+@override_settings(REGISTRO_SECRET_KEY="")
 class RegistroPasswordCortaTest(HypothesisTestCase):
     """
     POST /api/v1/registro/ con contraseña < 8 chars devuelve HTTP 400.
@@ -378,6 +381,7 @@ class RegistroPasswordCortaTest(HypothesisTestCase):
 
 # ─── Propiedad 23: Registro válido crea usuario admin con tokens JWT ──────────
 
+@override_settings(REGISTRO_SECRET_KEY="")
 class RegistroValidoCreaAdminTest(HypothesisTestCase):
     """
     POST /api/v1/registro/ con payload válido crea usuario en grupo admin

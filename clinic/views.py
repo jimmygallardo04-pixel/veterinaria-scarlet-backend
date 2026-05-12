@@ -75,6 +75,7 @@ from .services import (
     listar_veterinarios,
     obtener_alertas_clinicas,
     registrar_clinica,
+    sincronizar_email_admin_clinica,
     solicitar_codigo_verificacion,
     validar_codigo_verificacion,
 )
@@ -478,6 +479,7 @@ class CitaViewSet(TenantQuerysetMixin, PacienteFilterMixin, SoftDeleteModelViewS
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        clinica = self.get_clinica()
         queryset = (
             Cita.objects
             .select_related("paciente", "tutor")
@@ -486,6 +488,8 @@ class CitaViewSet(TenantQuerysetMixin, PacienteFilterMixin, SoftDeleteModelViewS
                 tutor__eliminado_en__isnull=True,
             )
         )
+        if clinica is not None:
+            queryset = queryset.filter(clinica=clinica)
         return self._apply_paciente_filter(queryset)
 
 
@@ -502,12 +506,36 @@ class VacunaViewSet(TenantQuerysetMixin, PacienteFilterMixin, SoftDeleteModelVie
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        clinica = self.get_clinica()
         queryset = (
             Vacuna.objects
             .select_related("paciente")
             .filter(paciente__eliminado_en__isnull=True)
         )
+        if clinica is not None:
+            queryset = queryset.filter(clinica=clinica)
         return self._apply_paciente_filter(queryset)
+
+    def _invalidar_cache_alertas(self) -> None:
+        """Invalida todas las keys de caché de alertas para la clínica actual."""
+        clinica = self.get_clinica()
+        if clinica is None:
+            return
+        for dias in (7, 14, 30, 60, 90):
+            cache.delete(f"alertas:clinica:{clinica.id}:dias:{dias}")
+
+    def perform_create(self, serializer):
+        super().perform_create(serializer)
+        self._invalidar_cache_alertas()
+
+    def perform_update(self, serializer):
+        super().perform_update(serializer)
+        self._invalidar_cache_alertas()
+
+    def destroy(self, request, *args, **kwargs):
+        response = super().destroy(request, *args, **kwargs)
+        self._invalidar_cache_alertas()
+        return response
 
 
 @extend_schema_view(
@@ -523,12 +551,36 @@ class TratamientoViewSet(TenantQuerysetMixin, PacienteFilterMixin, SoftDeleteMod
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        clinica = self.get_clinica()
         queryset = (
             Tratamiento.objects
             .select_related("paciente")
             .filter(paciente__eliminado_en__isnull=True)
         )
+        if clinica is not None:
+            queryset = queryset.filter(clinica=clinica)
         return self._apply_paciente_filter(queryset)
+
+    def _invalidar_cache_alertas(self) -> None:
+        """Invalida todas las keys de caché de alertas para la clínica actual."""
+        clinica = self.get_clinica()
+        if clinica is None:
+            return
+        for dias in (7, 14, 30, 60, 90):
+            cache.delete(f"alertas:clinica:{clinica.id}:dias:{dias}")
+
+    def perform_create(self, serializer):
+        super().perform_create(serializer)
+        self._invalidar_cache_alertas()
+
+    def perform_update(self, serializer):
+        super().perform_update(serializer)
+        self._invalidar_cache_alertas()
+
+    def destroy(self, request, *args, **kwargs):
+        response = super().destroy(request, *args, **kwargs)
+        self._invalidar_cache_alertas()
+        return response
 
 
 @extend_schema_view(
@@ -544,12 +596,40 @@ class ArchivoDocumentoViewSet(TenantQuerysetMixin, PacienteFilterMixin, SoftDele
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        clinica = self.get_clinica()
         queryset = (
             ArchivoDocumento.objects
             .select_related("paciente", "tipo")
             .filter(paciente__eliminado_en__isnull=True)
         )
+        if clinica is not None:
+            queryset = queryset.filter(clinica=clinica)
         return self._apply_paciente_filter(queryset)
+
+
+# ─── Helper: obtener clínica del admin autenticado ───────────────────────────
+
+def _get_clinica_admin(request) -> tuple:
+    """
+    Verifica que el usuario sea admin y devuelve su clínica.
+
+    Returns:
+        (clinica, None) si todo está bien.
+        (None, Response) con el error HTTP si no tiene permiso.
+    """
+    if not es_admin(request.user):
+        return None, Response(
+            {"detail": "Se requiere rol de administrador."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    try:
+        clinica = request.user.perfil.clinica
+    except (AttributeError, PerfilUsuario.DoesNotExist):
+        return None, Response(
+            {"detail": "Tu cuenta no está asociada a ninguna clínica."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return clinica, None
 
 
 # ─── Endpoints de verificación de email ──────────────────────────────────────
@@ -722,6 +802,11 @@ def clinica_view(request):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     serializer.save()
+
+    # Si el email_admin cambió, sincronizar User.email y User.username del admin
+    if "email_admin" in serializer.validated_data:
+        sincronizar_email_admin_clinica(clinica, serializer.validated_data["email_admin"])
+
     logger.info(
         "Datos de clínica actualizados: clinica_id=%s usuario=%s campos=%s",
         clinica.id,
@@ -745,19 +830,9 @@ def veterinarios_view(request):
     GET  → lista todos los veterinarios activos.
     POST → crea un nuevo veterinario. Body: { nombre, email, password }
     """
-    if not es_admin(request.user):
-        return Response(
-            {"detail": "Se requiere rol de administrador."},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-
-    try:
-        clinica = request.user.perfil.clinica
-    except (AttributeError, PerfilUsuario.DoesNotExist):
-        return Response(
-            {"detail": "Tu cuenta no está asociada a ninguna clínica."},
-            status=status.HTTP_403_FORBIDDEN,
-        )
+    clinica, err = _get_clinica_admin(request)
+    if err:
+        return err
 
     if request.method == "GET":
         veterinarios = listar_veterinarios(clinica)
@@ -777,6 +852,8 @@ def veterinarios_view(request):
         result = crear_veterinario(data, clinica)
     except CamposObligatoriosError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    except EmailFormatoInvalidoError as exc:
+        return Response({"email": [str(exc)]}, status=status.HTTP_400_BAD_REQUEST)
     except EmailYaRegistradoError as exc:
         return Response({"email": [str(exc)]}, status=status.HTTP_400_BAD_REQUEST)
     except PasswordDemasiadoCortaError as exc:
@@ -806,19 +883,9 @@ def veterinario_detail_view(request, pk: int):
     PATCH → edita nombre, email y/o contraseña del veterinario.
     DELETE → desactiva el veterinario con el id dado.
     """
-    if not es_admin(request.user):
-        return Response(
-            {"detail": "Se requiere rol de administrador."},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-
-    try:
-        clinica = request.user.perfil.clinica
-    except (AttributeError, PerfilUsuario.DoesNotExist):
-        return Response(
-            {"detail": "Tu cuenta no está asociada a ninguna clínica."},
-            status=status.HTTP_403_FORBIDDEN,
-        )
+    clinica, err = _get_clinica_admin(request)
+    if err:
+        return err
 
     if request.method == "PATCH":
         data = EditarVeterinarioInput(
@@ -880,10 +947,19 @@ class AlertaClinicaViewSet(viewsets.ViewSet):
         try:
             clinica = request.user.perfil.clinica
         except (AttributeError, PerfilUsuario.DoesNotExist):
-            from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Tu cuenta no está asociada a ninguna clínica.")
 
-        cache_key = f"alertas:clinica:{clinica.id}"
+        # dias_anticipacion: solo valores discretos para evitar explosión de keys de caché.
+        # Valores permitidos: 7, 14, 30, 60, 90. Cualquier otro valor se redondea al más cercano.
+        _DIAS_PERMITIDOS = (7, 14, 30, 60, 90)
+        try:
+            dias_raw = int(request.query_params.get("dias", 30))
+        except (ValueError, TypeError):
+            dias_raw = 30
+        # Redondear al valor permitido más cercano
+        dias = min(_DIAS_PERMITIDOS, key=lambda d: abs(d - dias_raw))
+
+        cache_key = f"alertas:clinica:{clinica.id}:dias:{dias}"
 
         # Intentar servir desde caché
         cached = cache.get(cache_key)
@@ -891,7 +967,7 @@ class AlertaClinicaViewSet(viewsets.ViewSet):
             logger.debug("Alertas servidas desde caché")
             return Response(cached)
 
-        alertas: AlertasClinicaResult = obtener_alertas_clinicas(clinica=clinica, dias_anticipacion=30)
+        alertas: AlertasClinicaResult = obtener_alertas_clinicas(clinica=clinica, dias_anticipacion=dias)
 
         # Serializar primero para evaluar los querysets una sola vez,
         # luego usar len() en lugar de .count() (evita 3 queries extra de COUNT)

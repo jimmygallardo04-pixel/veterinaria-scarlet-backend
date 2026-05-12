@@ -15,6 +15,7 @@ import secrets
 import string
 from dataclasses import dataclass
 from datetime import date, timedelta
+from html import escape as html_escape
 
 from django.conf import settings as django_settings
 from django.contrib.auth.models import User
@@ -185,7 +186,7 @@ def _enviar_codigo_por_email(email: str, codigo: str) -> None:
                   </p>
                   <div style="background:#f1f5f9;border-radius:12px;padding:24px;text-align:center;margin-bottom:24px">
                     <span style="font-size:40px;font-weight:700;letter-spacing:12px;color:#0f172a">
-                      {codigo}
+                      {html_escape(codigo)}
                     </span>
                   </div>
                   <p style="color:#94a3b8;font-size:13px">
@@ -326,8 +327,8 @@ def registrar_clinica(data: RegistroClinicaInput) -> RegistroClinicaResult:
             username=email,
             email=email,
             password=data.password,
-            first_name=data.nombre_clinica,
-            last_name=data.nombre_admin,
+            first_name=data.nombre_admin,  # nombre del administrador
+            # last_name se deja vacío — el nombre de la clínica vive en Clinica.nombre
         )
         PerfilUsuario.objects.create(
             user=user,
@@ -376,13 +377,13 @@ def _enviar_correo_bienvenida(email: str, nombre_admin: str, nombre_clinica: str
                 <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px">
                   <h2 style="color:#16a34a;margin-bottom:8px">Veterinaria Scarlet</h2>
                   <p style="color:#475569;margin-bottom:16px">
-                    Hola <strong>{nombre_admin}</strong>,
+                    Hola <strong>{html_escape(nombre_admin)}</strong>,
                   </p>
                   <p style="color:#475569;margin-bottom:16px">
-                    Tu clínica <strong>{nombre_clinica}</strong> ha sido registrada exitosamente.
+                    Tu clínica <strong>{html_escape(nombre_clinica)}</strong> ha sido registrada exitosamente.
                   </p>
                   <p style="color:#475569;margin-bottom:24px">
-                    Ya puedes iniciar sesión con tu correo: <strong>{email}</strong>
+                    Ya puedes iniciar sesión con tu correo: <strong>{html_escape(email)}</strong>
                   </p>
                   <p style="color:#94a3b8;font-size:13px">
                     Equipo Veterinaria Scarlet
@@ -410,7 +411,7 @@ def buscar_pacientes(search: str = "", clinica=None) -> QuerySet:
         QuerySet de Paciente con select_related aplicado.
     """
     queryset = (
-        Paciente.objects
+        Paciente.objects  # ActiveManager ya filtra eliminado_en__isnull=True
         .select_related("tutor", "especie", "sexo")
         .filter(
             tutor__eliminado_en__isnull=True,
@@ -616,6 +617,46 @@ def eliminar_veterinario(user_id: int, clinica: "Clinica") -> None:
     user.is_active = False
     user.save(update_fields=["is_active"])
     logger.info("Veterinario desactivado: id=%s email=%s", user.id, user.email)
+
+
+def sincronizar_email_admin_clinica(clinica: "Clinica", nuevo_email: str) -> None:
+    """
+    Sincroniza User.email y User.username del administrador de la clínica
+    cuando se actualiza Clinica.email_admin vía PATCH /clinica/.
+
+    Si el usuario admin no se encuentra (caso raro), loguea un warning
+    pero no lanza excepción para no bloquear la actualización de la clínica.
+    """
+    nuevo_email = nuevo_email.strip().lower()
+    try:
+        perfil = (
+            PerfilUsuario.objects
+            .select_related("user")
+            .get(clinica=clinica, rol=PerfilUsuario.Rol.ADMIN)
+        )
+    except PerfilUsuario.DoesNotExist:
+        logger.warning(
+            "No se encontró perfil admin para clinica_id=%s al sincronizar email", clinica.id
+        )
+        return
+    except PerfilUsuario.MultipleObjectsReturned:
+        logger.warning(
+            "Múltiples admins en clinica_id=%s — no se sincroniza User.email", clinica.id
+        )
+        return
+
+    user = perfil.user
+    if user.email == nuevo_email:
+        return  # Nada que sincronizar
+
+    user.email = nuevo_email
+    user.username = nuevo_email
+    user.save(update_fields=["email", "username"])
+    logger.info(
+        "User.email sincronizado con Clinica.email_admin: user_id=%s email=%s",
+        user.id,
+        nuevo_email,
+    )
 
 
 def obtener_alertas_clinicas(
