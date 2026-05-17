@@ -233,24 +233,30 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_PAGINATION_CLASS": "clinic.pagination.ClinicPagination",
     "PAGE_SIZE": 20,
-    # Rate limiting global. Los endpoints de login/registro tienen throttles propios.
+
     "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.AnonRateThrottle",
         "rest_framework.throttling.UserRateThrottle",
     ],
+
     "DEFAULT_THROTTLE_RATES": {
         "anon": "20/min",
         "user": "200/min",
         "login": "5/min",
         "registro": "10/hour",
         "validacion_codigo": "5/hour",
-        "uuid_lookup": "20/hour",  # Rate limiting para lookups por UUID
+        "uuid_lookup": "20/hour",
     },
-    # Handler global de excepciones con respuestas estructuradas
+
     "EXCEPTION_HANDLER": "clinic.exceptions.custom_exception_handler",
-    # Esquema OpenAPI generado por drf-spectacular
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
+
+
+# Solo desactivar throttling en desarrollo
+if DEBUG:
+    REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = []
+    REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {}
 
 # Paginación — configurable sin tocar código
 API_PAGE_SIZE = int(os.getenv("API_PAGE_SIZE", "20"))

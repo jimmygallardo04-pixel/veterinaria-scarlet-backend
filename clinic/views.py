@@ -12,6 +12,8 @@ La lógica de negocio (alertas, búsqueda, registro) vive en services.py.
 import logging
 import hmac
 
+from uuid import UUID
+
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.cache import cache
@@ -474,6 +476,7 @@ class PacienteViewSet(TenantQuerysetMixin, SoftDeleteModelViewSet):
         search = self.request.query_params.get("search", "")
         clinica = self.get_clinica()
         activo_param = self.request.query_params.get("activo", "true").lower()
+        tutor_param = self.request.query_params.get("tutor")
 
         # Si se pasa ?activo=false, usamos all_objects para incluir inactivos
         if activo_param == "false":
@@ -487,14 +490,26 @@ class PacienteViewSet(TenantQuerysetMixin, SoftDeleteModelViewSet):
                 )
             )
         else:
-            queryset = buscar_pacientes(search=search, clinica=clinica)
+            queryset = buscar_pacientes(
+                search=search,
+                clinica=clinica,
+            )
 
         if clinica is not None and activo_param != "false":
             queryset = queryset.filter(clinica=clinica)
 
-        # Aplicar búsqueda solo si no estamos en modo "activo=false" (ya tiene su propia lógica)
+        # Filtrar por tutor (UUID o ID)
+        if tutor_param:
+            try:
+                UUID(str(tutor_param))
+                queryset = queryset.filter(tutor__uuid=tutor_param)
+            except ValueError:
+                queryset = queryset.filter(tutor_id=tutor_param)
+
+        # Aplicar búsqueda
         if search and activo_param != "false":
             term = search.strip()[:100]
+
             if term:
                 queryset = queryset.filter(
                     Q(nombre__icontains=term)
