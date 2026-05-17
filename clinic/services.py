@@ -411,10 +411,11 @@ def buscar_pacientes(search: str = "", clinica=None) -> QuerySet:
         QuerySet de Paciente con select_related aplicado.
     """
     queryset = (
-        Paciente.objects  # ActiveManager ya filtra eliminado_en__isnull=True
+        Paciente.objects  # ActiveManager ya filtra eliminado_en__isnull=True y activo=True
         .select_related("tutor", "especie", "sexo")
         .filter(
             tutor__eliminado_en__isnull=True,
+            tutor__activo=True,
             especie__eliminado_en__isnull=True,
         )
     )

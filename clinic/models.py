@@ -1,3 +1,5 @@
+import logging
+import uuid
 from datetime import date
 from decimal import Decimal
 
@@ -9,9 +11,12 @@ from django.utils import timezone
 
 from .managers import ActiveManager, AllObjectsManager
 
+logger = logging.getLogger(__name__)
+
 # ─── Multi-tenancy ────────────────────────────────────────────────────────────
 
 class Clinica(models.Model):
+    uuid        = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     nombre      = models.CharField(max_length=150)
     email_admin = models.EmailField(unique=True)
     creado_en   = models.DateTimeField(auto_now_add=True)
@@ -64,6 +69,7 @@ class BaseModel(models.Model):
     - `all_objects` → todos los registros, incluyendo eliminados
     """
 
+    uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     creado_en = models.DateTimeField(auto_now_add=True)
     actualizado_en = models.DateTimeField(auto_now=True)
     eliminado_en = models.DateTimeField(blank=True, null=True)
@@ -82,6 +88,36 @@ class BaseModel(models.Model):
     def is_active(self) -> bool:
         """Devuelve True si el registro no ha sido eliminado."""
         return self.eliminado_en is None
+
+    def regenerate_uuid(self, reason: str = "security") -> None:
+        """
+        Regenera el UUID del recurso. Solo para emergencias (exposición, breach).
+
+        Args:
+            reason: Razón de la regeneración ("exposure", "security_breach", "ownership_change", etc.)
+
+        Warning:
+            Cambiar el UUID rompe referencias existentes. Solo usar en emergencias.
+        """
+        if self.uuid is None:
+            raise ValueError("No existe UUID para regenerar")
+
+        from django.contrib.auth.models import User
+        from django.utils import timezone
+
+        old_uuid = self.uuid
+        self.uuid = uuid.uuid4()
+
+        # Registrar cambio en historial (si el modelo lo soporta)
+        if hasattr(self, 'uuid_anterior'):
+            self.uuid_anterior = old_uuid
+
+        self.save(update_fields=['uuid'] + (['uuid_anterior'] if hasattr(self, 'uuid_anterior') else []))
+
+        logger.warning(
+            f"UUID regenerated for {self.__class__.__name__} (id={self.pk}): "
+            f"{old_uuid} → {self.uuid} (reason: {reason})"
+        )
 
 
 # ─── Catálogos ────────────────────────────────────────────────────────────────
@@ -162,6 +198,7 @@ class Tutor(BaseModel):
     telefono = models.CharField(max_length=30)
     email = models.EmailField(blank=True, null=True)
     direccion = models.CharField(max_length=255, blank=True, null=True)
+    activo = models.BooleanField(default=True, db_index=True)
 
     class Meta:
         ordering = ["nombre"]
@@ -182,7 +219,9 @@ class Paciente(BaseModel):
     fecha_nacimiento = models.DateField(blank=True, null=True)
     color = models.CharField(max_length=100, blank=True, null=True)
     esterilizado = models.BooleanField(default=False)
+    chip = models.CharField(max_length=25, blank=True, null=True)
     observaciones = models.TextField(blank=True, null=True)
+    activo = models.BooleanField(default=True, db_index=True)
 
     class Meta:
         ordering = ["-creado_en"]

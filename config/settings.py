@@ -244,6 +244,7 @@ REST_FRAMEWORK = {
         "login": "5/min",
         "registro": "10/hour",
         "validacion_codigo": "5/hour",
+        "uuid_lookup": "20/hour",  # Rate limiting para lookups por UUID
     },
     # Handler global de excepciones con respuestas estructuradas
     "EXCEPTION_HANDLER": "clinic.exceptions.custom_exception_handler",

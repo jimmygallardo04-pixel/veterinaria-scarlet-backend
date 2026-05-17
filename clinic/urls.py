@@ -39,7 +39,7 @@ router.register(r"alertas", AlertaClinicaViewSet, basename="alertas")
 urlpatterns = [
     path("", include(router.urls)),
     path("veterinarios/", veterinarios_view, name="veterinarios"),
-    path("veterinarios/<int:pk>/", veterinario_detail_view, name="veterinario-detail"),
+    path("veterinarios/<int:pk>/", veterinario_detail_view, name="veterinario-detail"),  # Excepción: Users de Django usan ID numérico
     path("verificar-email/solicitar/", solicitar_codigo_view, name="solicitar-codigo"),
     path("verificar-email/validar/", validar_codigo_view, name="validar-codigo"),
 ]
