@@ -313,6 +313,15 @@ class Tratamiento(BaseModel):
         "Clinica", on_delete=models.CASCADE, db_index=True
     )
     paciente = models.ForeignKey(Paciente, on_delete=models.CASCADE, related_name="tratamientos")
+    ficha_clinica = models.ForeignKey(
+        FichaClinica,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="tratamientos_asociados",
+        help_text="Ficha clínica desde la cual se originó este tratamiento (opcional)"
+    )
 
     medicamento = models.CharField(max_length=150)
     dosis = models.CharField(max_length=100)
@@ -331,6 +340,12 @@ class Tratamiento(BaseModel):
                 raise ValidationError(
                     {"fecha_fin": "La fecha de fin debe ser igual o posterior a la fecha de inicio."}
                 )
+
+        # Validar que la ficha pertenece al mismo paciente
+        if self.ficha_clinica and self.ficha_clinica.paciente_id != self.paciente_id:
+            raise ValidationError(
+                {"ficha_clinica": "La ficha clínica debe pertenecer al mismo paciente."}
+            )
 
     def __str__(self) -> str:
         return f"{self.medicamento} - {self.paciente.nombre}"

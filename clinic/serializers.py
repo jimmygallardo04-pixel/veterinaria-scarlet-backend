@@ -295,22 +295,40 @@ class VacunaSerializer(serializers.ModelSerializer):
 
 class TratamientoSerializer(serializers.ModelSerializer):
     paciente_nombre = serializers.CharField(source="paciente.nombre", read_only=True)
+    ficha_clinica_info = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Tratamiento
         exclude = AUDIT_FIELDS
-        read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY, "paciente_nombre")
+        read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY, "paciente_nombre", "ficha_clinica_info")
+
+    def get_ficha_clinica_info(self, obj):
+        if obj.ficha_clinica:
+            return {
+                "id": obj.ficha_clinica.id,
+                "fecha": obj.ficha_clinica.fecha,
+                "motivo_consulta": obj.ficha_clinica.motivo_consulta
+            }
+        return None
 
     def validate(self, attrs):
-        """fecha_fin debe ser igual o posterior a fecha_inicio."""
         fecha_inicio = attrs.get("fecha_inicio")
         fecha_fin = attrs.get("fecha_fin")
+        ficha_clinica = attrs.get("ficha_clinica")
 
         if fecha_inicio and fecha_fin:
             if fecha_fin < fecha_inicio:
                 raise serializers.ValidationError(
                     {"fecha_fin": "La fecha de fin debe ser igual o posterior a la fecha de inicio."}
                 )
+
+        if ficha_clinica and "paciente" in attrs:
+            paciente = attrs["paciente"]
+            if ficha_clinica.paciente_id != paciente.id:
+                raise serializers.ValidationError(
+                    {"ficha_clinica": "La ficha clínica debe pertenecer al mismo paciente."}
+                )
+
         return attrs
 
 
