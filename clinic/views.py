@@ -12,6 +12,8 @@ La lógica de negocio (alertas, búsqueda, registro) vive en services.py.
 import logging
 import hmac
 
+from uuid import UUID
+
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.cache import cache
@@ -24,7 +26,7 @@ from rest_framework.decorators import api_view, permission_classes, throttle_cla
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import AllowAny, BasePermission, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.throttling import AnonRateThrottle
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
 
@@ -83,47 +85,6 @@ from .services import (
 logger = logging.getLogger(__name__)
 
 
-# ─── Base ViewSet ─────────────────────────────────────────────────────────────
-
-class SoftDeleteModelViewSet(viewsets.ModelViewSet):
-    """ModelViewSet que realiza soft-delete en lugar de borrado físico."""
-
-    def destroy(self, request, *args, **kwargs):
-        instance = self.get_object()
-        instance.soft_delete()
-        logger.info(
-            "Soft-delete: modelo=%s id=%s usuario=%s",
-            instance.__class__.__name__,
-            instance.pk,
-            request.user.username,
-        )
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-
-# ─── Permisos por rol ─────────────────────────────────────────────────────────
-
-def es_admin(user) -> bool:
-    """Devuelve True si el usuario es superusuario o tiene rol 'admin' en su PerfilUsuario."""
-    if user.is_superuser:
-        return True
-    try:
-        return user.perfil.rol == PerfilUsuario.Rol.ADMIN
-    except PerfilUsuario.DoesNotExist:
-        return False
-
-
-class EsAdminOSoloLectura(BasePermission):
-    """Admins pueden todo; veterinarios solo lectura (GET, HEAD, OPTIONS)."""
-    message = "Se requiere rol de administrador para modificar."
-
-    def has_permission(self, request, view):
-        if not (request.user and request.user.is_authenticated):
-            return False
-        if request.method in ("GET", "HEAD", "OPTIONS"):
-            return True
-        return es_admin(request.user)
-
-
 # ─── Throttles ────────────────────────────────────────────────────────────────
 
 class LoginRateThrottle(AnonRateThrottle):
@@ -157,6 +118,60 @@ class ValidacionCodigoThrottle(AnonRateThrottle):
             return super().get_rate()
         except Exception:
             return None  # Sin límite en entornos de test
+
+
+class UUIDLookupThrottle(UserRateThrottle):
+    """Rate limiting específico para lookups por UUID. Previene enumeración."""
+    scope = "uuid_lookup"
+
+    def get_rate(self):
+        try:
+            return super().get_rate()
+        except Exception:
+            return None  # Sin límite en entornos de test
+
+
+# ─── Permisos por rol ─────────────────────────────────────────────────────────
+
+def es_admin(user) -> bool:
+    """Devuelve True si el usuario es superusuario o tiene rol 'admin' en su PerfilUsuario."""
+    if user.is_superuser:
+        return True
+    try:
+        return user.perfil.rol == PerfilUsuario.Rol.ADMIN
+    except PerfilUsuario.DoesNotExist:
+        return False
+
+
+class EsAdminOSoloLectura(BasePermission):
+    """Admins pueden todo; veterinarios solo lectura (GET, HEAD, OPTIONS)."""
+    message = "Se requiere rol de administrador para modificar."
+
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return True
+        return es_admin(request.user)
+
+
+# ─── Base ViewSet ─────────────────────────────────────────────────────────────
+
+class SoftDeleteModelViewSet(viewsets.ModelViewSet):
+    """ModelViewSet que realiza soft-delete en lugar de borrado físico."""
+    lookup_field = "uuid"
+    throttle_classes = [UUIDLookupThrottle]
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        instance.soft_delete()
+        logger.info(
+            "Soft-delete: modelo=%s id=%s usuario=%s",
+            instance.__class__.__name__,
+            instance.pk,
+            request.user.username,
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class FlexibleTokenSerializer(TokenObtainPairSerializer):
@@ -199,16 +214,21 @@ class PacienteFilterMixin:
     """
 
     def _apply_paciente_filter(self, queryset):
-        paciente_id = self.request.query_params.get("paciente")
-        if paciente_id is not None:
-            # Validar que sea un entero positivo para evitar valores malformados
+        paciente_val = self.request.query_params.get("paciente")
+        if paciente_val is not None:
+            import uuid
             try:
-                paciente_id_int = int(paciente_id)
-                if paciente_id_int <= 0:
-                    raise ValueError
-            except (ValueError, TypeError):
-                return queryset.none()
-            queryset = queryset.filter(paciente_id=paciente_id_int)
+                paciente_uuid = uuid.UUID(paciente_val)
+                queryset = queryset.filter(paciente__uuid=paciente_uuid)
+            except ValueError:
+                try:
+                    paciente_id_int = int(paciente_val)
+                    if paciente_id_int > 0:
+                        queryset = queryset.filter(paciente_id=paciente_id_int)
+                    else:
+                        raise ValueError
+                except ValueError:
+                    return queryset.none()
         return queryset
 
 
@@ -270,11 +290,11 @@ def me_view(request):
     user = request.user
     try:
         perfil = user.perfil
-        clinica_id = perfil.clinica_id
+        clinica_uuid = perfil.clinica.uuid
         clinica_nombre = perfil.clinica.nombre
         rol = perfil.rol
     except (AttributeError, PerfilUsuario.DoesNotExist):
-        clinica_id = None
+        clinica_uuid = None
         clinica_nombre = None
         rol = "superusuario" if user.is_superuser else None
 
@@ -285,7 +305,7 @@ def me_view(request):
         "last_name": user.last_name,
         "is_superuser": user.is_superuser,
         "rol": rol,
-        "clinica_id": clinica_id,
+        "clinica_uuid": clinica_uuid,
         "clinica_nombre": clinica_nombre,
     })
 
@@ -386,7 +406,18 @@ class TipoArchivoDocumentoViewSet(_CachedCatalogMixin, TenantQuerysetMixin, Soft
 # ─── ViewSets principales ─────────────────────────────────────────────────────
 
 @extend_schema_view(
-    list=extend_schema(summary="Listar tutores", tags=["Tutores"]),
+    list=extend_schema(
+        summary="Listar tutores",
+        tags=["Tutores"],
+        parameters=[
+            OpenApiParameter(
+                name="activo",
+                description="Filtrar por estado activo (true/false). Por defecto muestra solo activos.",
+                required=False,
+                type=bool,
+            )
+        ],
+    ),
     create=extend_schema(summary="Crear tutor", tags=["Tutores"]),
     retrieve=extend_schema(summary="Obtener tutor", tags=["Tutores"]),
     update=extend_schema(summary="Actualizar tutor", tags=["Tutores"]),
@@ -397,6 +428,19 @@ class TutorViewSet(TenantQuerysetMixin, SoftDeleteModelViewSet):
     serializer_class = TutorSerializer
     permission_classes = [IsAuthenticated]
     queryset = Tutor.objects.all()
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        # El ActiveManager ya filtra por activo=True y eliminado_en__isnull=True
+        # Si se pasa ?activo=false, mostrar todos los tutores (activos e inactivos)
+        activo_param = self.request.query_params.get("activo", "true").lower()
+        if activo_param == "false":
+            # Usar all_objects para incluir inactivos, pero seguir filtrando eliminados
+            queryset = Tutor.all_objects.filter(eliminado_en__isnull=True)
+        elif activo_param != "true":
+            # Valor inválido, por defecto mostrar solo activos
+            pass
+        return queryset
 
 
 @extend_schema_view(
@@ -409,6 +453,12 @@ class TutorViewSet(TenantQuerysetMixin, SoftDeleteModelViewSet):
                 description="Busca por nombre del paciente, tutor o especie.",
                 required=False,
                 type=str,
+            ),
+            OpenApiParameter(
+                name="activo",
+                description="Filtrar por estado activo (true/false). Por defecto muestra solo activos.",
+                required=False,
+                type=bool,
             )
         ],
     ),
@@ -425,7 +475,49 @@ class PacienteViewSet(TenantQuerysetMixin, SoftDeleteModelViewSet):
     def get_queryset(self):
         search = self.request.query_params.get("search", "")
         clinica = self.get_clinica()
-        return buscar_pacientes(search=search, clinica=clinica)
+        activo_param = self.request.query_params.get("activo", "true").lower()
+        tutor_param = self.request.query_params.get("tutor")
+
+        # Si se pasa ?activo=false, usamos all_objects para incluir inactivos
+        if activo_param == "false":
+            queryset = (
+                Paciente.all_objects
+                .select_related("tutor", "especie", "sexo")
+                .filter(
+                    tutor__eliminado_en__isnull=True,
+                    tutor__activo=True,
+                    especie__eliminado_en__isnull=True,
+                )
+            )
+        else:
+            queryset = buscar_pacientes(
+                search=search,
+                clinica=clinica,
+            )
+
+        if clinica is not None and activo_param != "false":
+            queryset = queryset.filter(clinica=clinica)
+
+        # Filtrar por tutor (UUID o ID)
+        if tutor_param:
+            try:
+                UUID(str(tutor_param))
+                queryset = queryset.filter(tutor__uuid=tutor_param)
+            except ValueError:
+                queryset = queryset.filter(tutor_id=tutor_param)
+
+        # Aplicar búsqueda
+        if search and activo_param != "false":
+            term = search.strip()[:100]
+
+            if term:
+                queryset = queryset.filter(
+                    Q(nombre__icontains=term)
+                    | Q(tutor__nombre__icontains=term)
+                    | Q(especie__nombre__icontains=term)
+                )
+
+        return queryset
 
 
 @extend_schema_view(
@@ -514,6 +606,16 @@ class VacunaViewSet(TenantQuerysetMixin, PacienteFilterMixin, SoftDeleteModelVie
         )
         if clinica is not None:
             queryset = queryset.filter(clinica=clinica)
+
+        # Filtrado opcional por fechas
+        fecha_desde = self.request.query_params.get("fecha_desde")
+        fecha_hasta = self.request.query_params.get("fecha_hasta")
+
+        if fecha_desde:
+            queryset = queryset.filter(fecha_aplicacion__gte=fecha_desde)
+        if fecha_hasta:
+            queryset = queryset.filter(fecha_aplicacion__lte=fecha_hasta)
+
         return self._apply_paciente_filter(queryset)
 
     def _invalidar_cache_alertas(self) -> None:
@@ -559,6 +661,24 @@ class TratamientoViewSet(TenantQuerysetMixin, PacienteFilterMixin, SoftDeleteMod
         )
         if clinica is not None:
             queryset = queryset.filter(clinica=clinica)
+
+        # Filtrado opcional por fechas (tratamientos que se solapan con el rango)
+        fecha_desde = self.request.query_params.get("fecha_desde")
+        fecha_hasta = self.request.query_params.get("fecha_hasta")
+
+        if fecha_desde or fecha_hasta:
+            from django.db.models import Q
+            if fecha_desde and fecha_hasta:
+                queryset = queryset.filter(
+                    Q(fecha_inicio__lte=fecha_hasta) & (Q(fecha_fin__isnull=True) | Q(fecha_fin__gte=fecha_desde))
+                )
+            elif fecha_desde:
+                queryset = queryset.filter(
+                    Q(fecha_fin__isnull=True) | Q(fecha_fin__gte=fecha_desde)
+                )
+            elif fecha_hasta:
+                queryset = queryset.filter(fecha_inicio__lte=fecha_hasta)
+
         return self._apply_paciente_filter(queryset)
 
     def _invalidar_cache_alertas(self) -> None:
@@ -753,7 +873,7 @@ def registro_clinica_view(request):
                 "email": result.user.email,
                 "first_name": result.user.first_name,
                 "rol": "admin",
-                "clinica_id": result.clinica.id,
+                "clinica_uuid": result.clinica.uuid,
                 "clinica_nombre": result.clinica.nombre,
             },
         },

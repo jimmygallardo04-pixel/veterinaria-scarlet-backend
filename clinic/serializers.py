@@ -36,10 +36,13 @@ from .models import (
 AUDIT_FIELDS = ("eliminado_en",)
 
 # Campos de solo lectura comunes a todos los modelos
-BASE_READ_ONLY = ("id", "creado_en", "actualizado_en")
+BASE_READ_ONLY = ("uuid", "creado_en", "actualizado_en")
 
 # Campo tenant — siempre read-only; se asigna en perform_create del mixin
 TENANT_READ_ONLY = ("clinica",)
+
+# Campos a excluir (auditoría + IDs numéricos)
+EXCLUDE_FIELDS = AUDIT_FIELDS + ("id",)
 
 
 # ─── Clinica ──────────────────────────────────────────────────────────────────
@@ -49,8 +52,8 @@ class ClinicaSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Clinica
-        fields = ("id", "nombre", "email_admin")
-        read_only_fields = ("id", "nombre", "email_admin")
+        fields = ("uuid", "nombre", "email_admin")
+        read_only_fields = ("uuid", "nombre", "email_admin")
 
 
 class ClinicaEditSerializer(serializers.ModelSerializer):
@@ -58,8 +61,8 @@ class ClinicaEditSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Clinica
-        fields = ("id", "nombre", "email_admin", "creado_en")
-        read_only_fields = ("id", "creado_en")
+        fields = ("uuid", "nombre", "email_admin", "creado_en")
+        read_only_fields = ("uuid", "creado_en")
 
     def validate_nombre(self, value):
         value = value.strip()
@@ -139,7 +142,7 @@ class EspecieSerializer(_SoftDeleteNombreValidatorMixin, serializers.ModelSerial
 
     class Meta:
         model = Especie
-        exclude = AUDIT_FIELDS
+        exclude = EXCLUDE_FIELDS
         read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY)
 
 
@@ -150,7 +153,7 @@ class SexoPacienteSerializer(_SoftDeleteNombreValidatorMixin, serializers.ModelS
 
     class Meta:
         model = SexoPaciente
-        exclude = AUDIT_FIELDS
+        exclude = EXCLUDE_FIELDS
         read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY)
 
 
@@ -161,17 +164,36 @@ class TipoArchivoDocumentoSerializer(_SoftDeleteNombreValidatorMixin, serializer
 
     class Meta:
         model = TipoArchivoDocumento
-        exclude = AUDIT_FIELDS
+        exclude = EXCLUDE_FIELDS
         read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY)
 
 
 # ─── Entidades principales ────────────────────────────────────────────────────
 
 class TutorSerializer(serializers.ModelSerializer):
+    # Campo de solo lectura para mostrar pacientes asociados
+    pacientes_info = serializers.SerializerMethodField(read_only=True)
+
     class Meta:
         model = Tutor
-        exclude = AUDIT_FIELDS
-        read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY)
+        exclude = EXCLUDE_FIELDS
+        read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY, "pacientes_info")
+
+    def get_pacientes_info(self, obj):
+        """Devuelve una lista simplificada de pacientes activos del tutor."""
+        pacientes = obj.pacientes.filter(activo=True, eliminado_en__isnull=True)[:10]
+        return [
+            {
+                "uuid": p.uuid,
+                "nombre": p.nombre,
+                "especie_nombre": p.especie.nombre if p.especie else None
+            }
+            for p in pacientes
+        ]
+
+    def validate_activo(self, value):
+        """Validar que el campo activo sea booleano."""
+        return value
 
     def validate_rut(self, value):
         """Valida formato y dígito verificador del RUT chileno: 12345678-9 o 1234567-K."""
@@ -201,13 +223,14 @@ class TutorSerializer(serializers.ModelSerializer):
 class PacienteSerializer(serializers.ModelSerializer):
     # Campos de solo lectura derivados de relaciones
     tutor_nombre = serializers.CharField(source="tutor.nombre", read_only=True)
+    tutor_uuid = serializers.UUIDField(source="tutor.uuid", read_only=True)
     especie_nombre = serializers.CharField(source="especie.nombre", read_only=True)
     sexo_nombre = serializers.CharField(source="sexo.nombre", read_only=True)
 
     class Meta:
         model = Paciente
-        exclude = AUDIT_FIELDS
-        read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY, "tutor_nombre", "especie_nombre", "sexo_nombre")
+        exclude = EXCLUDE_FIELDS
+        read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY, "tutor_nombre", "tutor_uuid", "especie_nombre", "sexo_nombre")
 
     def validate_fecha_nacimiento(self, value):
         """La fecha de nacimiento no puede ser futura."""
@@ -219,14 +242,30 @@ class PacienteSerializer(serializers.ModelSerializer):
             )
         return value
 
+    def validate_activo(self, value):
+        """Validar que el campo activo sea booleano."""
+        return value
+
+    def validate_chip(self, value):
+        """Validar formato del número de chip (campo opcional)."""
+        if value is None or value == "":
+            return value
+        value = value.strip()
+        if not re.match(r"^[A-Z0-9]{10,25}$", value.upper()):
+            raise serializers.ValidationError(
+                "El número de chip debe contener entre 10 y 25 caracteres alfanuméricos."
+            )
+        return value.upper()
+
 
 class FichaClinicaSerializer(serializers.ModelSerializer):
     paciente_nombre = serializers.CharField(source="paciente.nombre", read_only=True)
+    paciente_uuid = serializers.UUIDField(source="paciente.uuid", read_only=True)
 
     class Meta:
         model = FichaClinica
-        exclude = AUDIT_FIELDS
-        read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY, "paciente_nombre")
+        exclude = EXCLUDE_FIELDS
+        read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY, "paciente_nombre", "paciente_uuid")
         # NOTA: El campo `fecha` es un DateTimeField con USE_TZ=True, por lo que se
         # serializa en UTC (ISO 8601 con 'Z'). El frontend debe convertirlo a la zona
         # horaria local del usuario para mostrarlo correctamente.
@@ -263,22 +302,25 @@ class FichaClinicaSerializer(serializers.ModelSerializer):
 
 class CitaSerializer(serializers.ModelSerializer):
     paciente_nombre = serializers.CharField(source="paciente.nombre", read_only=True)
+    paciente_uuid = serializers.UUIDField(source="paciente.uuid", read_only=True)
     tutor_nombre = serializers.CharField(source="tutor.nombre", read_only=True)
+    tutor_uuid = serializers.UUIDField(source="tutor.uuid", read_only=True)
 
     class Meta:
         model = Cita
-        exclude = AUDIT_FIELDS
-        read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY, "paciente_nombre", "tutor_nombre")
+        exclude = EXCLUDE_FIELDS
+        read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY, "paciente_nombre", "paciente_uuid", "tutor_nombre", "tutor_uuid")
         # DRF valida los choices automáticamente — validate_estado no es necesario
 
 
 class VacunaSerializer(serializers.ModelSerializer):
     paciente_nombre = serializers.CharField(source="paciente.nombre", read_only=True)
+    paciente_uuid = serializers.UUIDField(source="paciente.uuid", read_only=True)
 
     class Meta:
         model = Vacuna
-        exclude = AUDIT_FIELDS
-        read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY, "paciente_nombre")
+        exclude = EXCLUDE_FIELDS
+        read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY, "paciente_nombre", "paciente_uuid")
 
     def validate(self, attrs):
         """proxima_dosis debe ser posterior a fecha_aplicacion."""
@@ -295,33 +337,53 @@ class VacunaSerializer(serializers.ModelSerializer):
 
 class TratamientoSerializer(serializers.ModelSerializer):
     paciente_nombre = serializers.CharField(source="paciente.nombre", read_only=True)
+    paciente_uuid = serializers.UUIDField(source="paciente.uuid", read_only=True)
+    ficha_clinica_info = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Tratamiento
-        exclude = AUDIT_FIELDS
-        read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY, "paciente_nombre")
+        exclude = EXCLUDE_FIELDS
+        read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY, "paciente_nombre", "paciente_uuid", "ficha_clinica_info")
+
+    def get_ficha_clinica_info(self, obj):
+        if obj.ficha_clinica:
+            return {
+                "uuid": obj.ficha_clinica.uuid,
+                "fecha": obj.ficha_clinica.fecha,
+                "motivo_consulta": obj.ficha_clinica.motivo_consulta
+            }
+        return None
 
     def validate(self, attrs):
-        """fecha_fin debe ser igual o posterior a fecha_inicio."""
         fecha_inicio = attrs.get("fecha_inicio")
         fecha_fin = attrs.get("fecha_fin")
+        ficha_clinica = attrs.get("ficha_clinica")
 
         if fecha_inicio and fecha_fin:
             if fecha_fin < fecha_inicio:
                 raise serializers.ValidationError(
                     {"fecha_fin": "La fecha de fin debe ser igual o posterior a la fecha de inicio."}
                 )
+
+        if ficha_clinica and "paciente" in attrs:
+            paciente = attrs["paciente"]
+            if ficha_clinica.paciente_id != paciente.id:
+                raise serializers.ValidationError(
+                    {"ficha_clinica": "La ficha clínica debe pertenecer al mismo paciente."}
+                )
+
         return attrs
 
 
 class ArchivoDocumentoSerializer(serializers.ModelSerializer):
     paciente_nombre = serializers.CharField(source="paciente.nombre", read_only=True)
+    paciente_uuid = serializers.UUIDField(source="paciente.uuid", read_only=True)
     tipo_nombre = serializers.CharField(source="tipo.nombre", read_only=True)
 
     class Meta:
         model = ArchivoDocumento
-        exclude = AUDIT_FIELDS
-        read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY, "paciente_nombre", "tipo_nombre")
+        exclude = EXCLUDE_FIELDS
+        read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY, "paciente_nombre", "paciente_uuid", "tipo_nombre")
 
     def validate_archivo_url(self, value):
         """La URL del archivo debe ser HTTPS en producción."""
@@ -350,6 +412,7 @@ class FichaClinicaDetalleSerializer(serializers.ModelSerializer):
     # Campos aplanados del paciente para acceso directo desde el frontend
     paciente_nombre = serializers.CharField(source="paciente.nombre", read_only=True)
     tutor_nombre = serializers.CharField(source="paciente.tutor.nombre", read_only=True)
+    tutor_uuid = serializers.UUIDField(source="paciente.tutor.uuid", read_only=True)
     especie_nombre = serializers.CharField(source="paciente.especie.nombre", read_only=True)
     sexo_nombre = serializers.CharField(source="paciente.sexo.nombre", read_only=True)
 
@@ -360,11 +423,11 @@ class FichaClinicaDetalleSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = FichaClinica
-        exclude = AUDIT_FIELDS
+        exclude = EXCLUDE_FIELDS
         read_only_fields = (
             *BASE_READ_ONLY,
             *TENANT_READ_ONLY,
-            "paciente_nombre", "tutor_nombre", "especie_nombre", "sexo_nombre",
+            "paciente_nombre", "tutor_nombre", "tutor_uuid", "especie_nombre", "sexo_nombre",
             "vacunas", "tratamientos", "archivos", "historial_fichas",
         )
 
