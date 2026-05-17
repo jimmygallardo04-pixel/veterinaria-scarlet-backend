@@ -514,6 +514,16 @@ class VacunaViewSet(TenantQuerysetMixin, PacienteFilterMixin, SoftDeleteModelVie
         )
         if clinica is not None:
             queryset = queryset.filter(clinica=clinica)
+
+        # Filtrado opcional por fechas
+        fecha_desde = self.request.query_params.get("fecha_desde")
+        fecha_hasta = self.request.query_params.get("fecha_hasta")
+
+        if fecha_desde:
+            queryset = queryset.filter(fecha_aplicacion__gte=fecha_desde)
+        if fecha_hasta:
+            queryset = queryset.filter(fecha_aplicacion__lte=fecha_hasta)
+
         return self._apply_paciente_filter(queryset)
 
     def _invalidar_cache_alertas(self) -> None:
@@ -559,6 +569,24 @@ class TratamientoViewSet(TenantQuerysetMixin, PacienteFilterMixin, SoftDeleteMod
         )
         if clinica is not None:
             queryset = queryset.filter(clinica=clinica)
+
+        # Filtrado opcional por fechas (tratamientos que se solapan con el rango)
+        fecha_desde = self.request.query_params.get("fecha_desde")
+        fecha_hasta = self.request.query_params.get("fecha_hasta")
+
+        if fecha_desde or fecha_hasta:
+            from django.db.models import Q
+            if fecha_desde and fecha_hasta:
+                queryset = queryset.filter(
+                    Q(fecha_inicio__lte=fecha_hasta) & (Q(fecha_fin__isnull=True) | Q(fecha_fin__gte=fecha_desde))
+                )
+            elif fecha_desde:
+                queryset = queryset.filter(
+                    Q(fecha_fin__isnull=True) | Q(fecha_fin__gte=fecha_desde)
+                )
+            elif fecha_hasta:
+                queryset = queryset.filter(fecha_inicio__lte=fecha_hasta)
+
         return self._apply_paciente_filter(queryset)
 
     def _invalidar_cache_alertas(self) -> None:
