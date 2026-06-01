@@ -36,13 +36,13 @@ from .models import (
 AUDIT_FIELDS = ("eliminado_en",)
 
 # Campos de solo lectura comunes a todos los modelos
-BASE_READ_ONLY = ("uuid", "creado_en", "actualizado_en")
+BASE_READ_ONLY = ("id", "uuid", "creado_en", "actualizado_en")
 
 # Campo tenant — siempre read-only; se asigna en perform_create del mixin
 TENANT_READ_ONLY = ("clinica",)
 
-# Campos a excluir (auditoría + IDs numéricos)
-EXCLUDE_FIELDS = AUDIT_FIELDS + ("id",)
+# Campos a excluir (solo auditoría interna — id ahora se expone como read-only)
+EXCLUDE_FIELDS = AUDIT_FIELDS
 
 
 # ─── Clinica ──────────────────────────────────────────────────────────────────
@@ -143,7 +143,7 @@ class EspecieSerializer(_SoftDeleteNombreValidatorMixin, serializers.ModelSerial
     class Meta:
         model = Especie
         exclude = EXCLUDE_FIELDS
-        read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY)
+        read_only_fields = ("id", *BASE_READ_ONLY, *TENANT_READ_ONLY)
 
 
 class SexoPacienteSerializer(_SoftDeleteNombreValidatorMixin, serializers.ModelSerializer):
@@ -154,7 +154,7 @@ class SexoPacienteSerializer(_SoftDeleteNombreValidatorMixin, serializers.ModelS
     class Meta:
         model = SexoPaciente
         exclude = EXCLUDE_FIELDS
-        read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY)
+        read_only_fields = ("id", *BASE_READ_ONLY, *TENANT_READ_ONLY)
 
 
 class TipoArchivoDocumentoSerializer(_SoftDeleteNombreValidatorMixin, serializers.ModelSerializer):
@@ -177,7 +177,7 @@ class TutorSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tutor
         exclude = EXCLUDE_FIELDS
-        read_only_fields = (*BASE_READ_ONLY, *TENANT_READ_ONLY, "pacientes_info")
+        read_only_fields = ("id", *BASE_READ_ONLY, *TENANT_READ_ONLY, "pacientes_info")
 
     def get_pacientes_info(self, obj):
         """Devuelve una lista simplificada de pacientes activos del tutor."""
