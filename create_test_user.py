@@ -15,6 +15,7 @@ clinica, created = Clinica.objects.get_or_create(
 )
 print(f"Clínica: {clinica.nombre} (UUID: {clinica.uuid}), created={created}")
 
+
 # Crear usuario
 user, created = User.objects.get_or_create(
     username="testuser",
